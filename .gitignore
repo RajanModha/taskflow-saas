@@ -36,6 +36,13 @@ ScaffoldingReadMe.txt
 # NuGet Symbol Packages
 *.snupkg
 
+# Node / frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+*.local
+
 # Others
 ~$*
 *~

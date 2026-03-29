@@ -1,2 +1,67 @@
-# taskflow-saas
-TaskFlow is a full-stack SaaS project management application built with .NET 10 and React, featuring authentication, multi-tenancy, and a modern dashboard for managing tasks and teams.
+# TaskFlow
+
+Full-stack workspace for **TaskFlow**: a SaaS-style task management app. The backend is **ASP.NET Core** on **.NET 10** with a small **clean architecture** layout; the frontend is **React** with **Vite** and **TypeScript**.
+
+## Repository layout
+
+| Path | Description |
+|------|-------------|
+| `backend/` | .NET solution (`TaskFlow.slnx`) and projects |
+| `backend/TaskFlow.Domain` | Domain entities and core model |
+| `backend/TaskFlow.Application` | Application abstractions and DI registration |
+| `backend/TaskFlow.Infrastructure` | Infrastructure services (implements application contracts) |
+| `backend/TaskFlow.API` | ASP.NET Core Web API host |
+| `frontend/` | Vite + React + TypeScript SPA |
+
+## Prerequisites
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download) (solution targets `net10.0`)
+- [Node.js](https://nodejs.org/) (LTS recommended) and npm, for the frontend
+
+HTTPS dev URLs use the ASP.NET dev certificate. If the browser warns about HTTPS, run:
+
+```powershell
+dotnet dev-certs https --trust
+```
+
+## Run the backend
+
+From the repository root:
+
+```powershell
+cd backend
+dotnet run --project TaskFlow.API
+```
+
+By default (see `TaskFlow.API/Properties/launchSettings.json`):
+
+- **HTTPS:** `https://localhost:7043`
+- **HTTP:** `http://localhost:5005`
+
+Example API route (uses Application → Infrastructure wiring): `GET /api/info` → JSON with the application name.
+
+Optional OpenAPI document in Development: see `Program.cs` (`MapOpenApi`).
+
+## Run the frontend
+
+Install dependencies once, then start the dev server:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+The dev server listens on **http://localhost:5173** (configured in `frontend/vite.config.ts`). The API enables CORS for `http://localhost:5173` and `https://localhost:5173` so you can call the backend from the browser while both run.
+
+Production build:
+
+```powershell
+cd frontend
+npm run build
+npm run preview
+```
+
+## Run apps independently
+
+You do **not** need both running at once. Start **only** the API for backend work, or **only** Vite for UI work. Start both when you want the SPA to talk to the API from the browser.

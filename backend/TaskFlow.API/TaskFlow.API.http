@@ -1,0 +1,6 @@
+@TaskFlow.API_HostAddress = http://localhost:5005
+
+GET {{TaskFlow.API_HostAddress}}/api/info
+Accept: application/json
+
+###
