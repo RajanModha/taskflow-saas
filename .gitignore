@@ -36,6 +36,10 @@ ScaffoldingReadMe.txt
 # NuGet Symbol Packages
 *.snupkg
 
+# Visual Studio / IDE
+.vs/
+*.csproj.user
+
 # Node / frontend
 node_modules/
 **/node_modules/

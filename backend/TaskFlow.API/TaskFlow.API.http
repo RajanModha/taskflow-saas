@@ -1,6 +1,39 @@
 @TaskFlow.API_HostAddress = http://localhost:5005
 
+### Info (anonymous)
 GET {{TaskFlow.API_HostAddress}}/api/info
 Accept: application/json
+
+###
+
+### Register
+POST {{TaskFlow.API_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "userName": "demo.user",
+  "password": "Str0ng!Pass",
+  "confirmPassword": "Str0ng!Pass"
+}
+
+###
+
+### Login
+POST {{TaskFlow.API_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "Str0ng!Pass"
+}
+
+###
+
+### Me (set @token from login/register response)
+@token = paste_jwt_here
+
+GET {{TaskFlow.API_HostAddress}}/api/auth/me
+Authorization: Bearer {{token}}
 
 ###
