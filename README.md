@@ -1,50 +1,133 @@
 # TaskFlow
 
-Full-stack workspace for **TaskFlow**: a SaaS-style task management app. The backend is **ASP.NET Core** on **.NET 10** with a small **clean architecture** layout; the frontend is **React** with **Vite** and **TypeScript**.
+TaskFlow is a multi-tenant, SaaS-style project and task management platform built for portfolio demonstration and real-world architecture practice.  
+It includes tenant-safe data isolation, JWT auth with roles, CQRS-based APIs, dashboard analytics, and a modern responsive frontend.
 
-## Repository layout
+## Project Overview
+
+This repository contains a complete full-stack application:
+- `backend/` - ASP.NET Core Web API (.NET 10) with Clean Architecture boundaries
+- `frontend/` - React + Vite + TypeScript SPA
+- `docker-compose.yml` - one-command local orchestration for app + PostgreSQL
+
+TaskFlow focuses on production-minded fundamentals:
+- tenant isolation by organization/workspace
+- structured API validation + error handling
+- logging and versioned API docs
+- clean UX with loading, error, and responsive states
+
+## Features
+
+- Authentication and authorization
+  - user registration/login with JWT
+  - role support (`Admin`, `User`)
+  - profile endpoint with workspace context
+- Multi-tenancy
+  - workspace create/join flow
+  - `org_id` claim enforcement
+  - tenant-scoped EF Core query filters and FK constraints
+- Project and task management
+  - CRUD for projects and tasks
+  - filtering, sorting, pagination
+  - task status, priority, due-date support
+- Dashboard analytics
+  - total/completed/pending tasks
+  - tasks-by-status aggregation
+  - chart-based visualization
+- Production readiness
+  - Serilog request/application logging
+  - global exception handling with Problem Details
+  - FluentValidation
+  - API versioning + Swagger
+- Containerized workflow
+  - backend + frontend + PostgreSQL via Docker Compose
+  - environment-based configuration
+
+## Tech Stack
+
+- Backend
+  - .NET 10, ASP.NET Core Web API
+  - EF Core + PostgreSQL
+  - ASP.NET Core Identity
+  - MediatR (CQRS)
+  - AutoMapper
+  - FluentValidation
+  - Serilog
+  - Swagger / OpenAPI + API Versioning
+- Frontend
+  - React 19, Vite, TypeScript
+  - React Router
+  - Axios
+  - Recharts
+  - Tailwind CSS
+- DevOps / Tooling
+  - Docker, Docker Compose
+  - Nginx (frontend serving and API reverse proxy)
+
+## Repository Structure
 
 | Path | Description |
 |------|-------------|
-| `backend/` | .NET solution (`TaskFlow.slnx`) and projects |
-| `backend/TaskFlow.Domain` | Domain entities and core model |
-| `backend/TaskFlow.Application` | Application abstractions and DI registration |
-| `backend/TaskFlow.Infrastructure` | Infrastructure services (implements application contracts) |
-| `backend/TaskFlow.API` | ASP.NET Core Web API host |
-| `frontend/` | Vite + React + TypeScript SPA |
+| `backend/TaskFlow.Domain` | Domain entities and core rules |
+| `backend/TaskFlow.Application` | Contracts, DTOs, validation, mapping |
+| `backend/TaskFlow.Infrastructure` | EF Core, Identity, handlers, services |
+| `backend/TaskFlow.API` | API host, middleware, controllers, startup |
+| `frontend/src` | SPA pages, API clients, auth/context, UI |
+| `docker-compose.yml` | Multi-container local environment |
 
-## Prerequisites
+## Setup Instructions
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download) (solution targets `net10.0`)
-- [Node.js](https://nodejs.org/) (LTS recommended) and npm, for the frontend
+### Option A: Docker (recommended, one command)
 
-HTTPS dev URLs use the ASP.NET dev certificate. If the browser warns about HTTPS, run:
+1. Create env file from template:
 
 ```powershell
-dotnet dev-certs https --trust
+copy .env.example .env
 ```
 
-## Run the backend
+2. Update `.env` values, especially `JWT_SIGNING_KEY` (32+ chars).
 
-From the repository root:
+3. Start everything:
+
+```powershell
+docker compose up --build
+```
+
+Services and URLs:
+- Frontend: `http://localhost:5173`
+- Backend (direct): `http://localhost:5005`
+- Backend via frontend proxy: `http://localhost:5173/api`
+- PostgreSQL: `localhost:5432`
+
+On first startup, the app applies migrations and seeds rich demo data automatically (configured in `.env` / `Seed` settings).
+
+Stop services:
+
+```powershell
+docker compose down
+```
+
+Remove services and DB volume:
+
+```powershell
+docker compose down -v
+```
+
+### Option B: Local development (without Docker)
+
+Prerequisites:
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Node.js](https://nodejs.org/) LTS + npm
+- PostgreSQL running locally
+
+Backend:
 
 ```powershell
 cd backend
 dotnet run --project TaskFlow.API
 ```
 
-By default (see `TaskFlow.API/Properties/launchSettings.json`):
-
-- **HTTPS:** `https://localhost:7043`
-- **HTTP:** `http://localhost:5005`
-
-Example API route (uses Application → Infrastructure wiring): `GET /api/info` → JSON with the application name.
-
-Optional OpenAPI document in Development: see `Program.cs` (`MapOpenApi`).
-
-## Run the frontend
-
-Install dependencies once, then start the dev server:
+Frontend:
 
 ```powershell
 cd frontend
@@ -52,61 +135,50 @@ npm install
 npm run dev
 ```
 
-The dev server listens on **http://localhost:5173** (configured in `frontend/vite.config.ts`). The API enables CORS for `http://localhost:5173` and `https://localhost:5173` so you can call the backend from the browser while both run.
-
-Production build:
+Useful build checks:
 
 ```powershell
-cd frontend
-npm run build
-npm run preview
+dotnet build backend/TaskFlow.slnx -c Release
+cd frontend; npm run build
 ```
 
-## Run apps independently
+## Demo Credentials (Client Walkthrough)
 
-You do **not** need both running at once. Start **only** the API for backend work, or **only** Vite for UI work. Start both when you want the SPA to talk to the API from the browser.
+Use these accounts after seeding:
 
-## Run with Docker (one command)
+- Platform admin:
+  - Email / Username: `admin@taskflow.local`
+  - Password: `Admin123!` (local settings) or your configured `SEED_ADMIN_PASSWORD` in Docker
+- Demo tenant users:
+  - Email / Username pattern: `demo.user001@taskflow.local` through `demo.user060@taskflow.local`
+  - Password: `Demo123!` (or your configured `SEED_DEMO_USER_PASSWORD`)
+  - Quick login examples:
+    - `demo.user001@taskflow.local` / `Demo123!`
+    - `demo.user002@taskflow.local` / `Demo123!`
+    - `demo.user003@taskflow.local` / `Demo123!`
+    - `demo.user010@taskflow.local` / `Demo123!`
+    - `demo.user015@taskflow.local` / `Demo123!`
+    - `demo.user020@taskflow.local` / `Demo123!`
+    - `demo.user030@taskflow.local` / `Demo123!`
+    - `demo.user040@taskflow.local` / `Demo123!`
+    - `demo.user050@taskflow.local` / `Demo123!`
+    - `demo.user060@taskflow.local` / `Demo123!`
 
-TaskFlow can run fully containerized (frontend + backend + PostgreSQL) via Docker Compose.
+Seed defaults generate at least:
+- 12 organizations
+- 60 users
+- 72 projects
+- 576 tasks
 
-### 1) Create env file
+## Suggested Portfolio Screenshots
 
-From repo root:
+Include 5-7 screenshots in your portfolio or README:
+- Landing page (`Home`) with clean branding and CTA
+- Authentication flow (Login/Register)
+- Workspace management (Create/Join workspace)
+- Dashboard analytics (cards + charts)
+- Projects management table (search/sort/edit)
+- Tasks management screen (filters + inline edit)
+- Swagger API docs (`/swagger`) to demonstrate backend quality
 
-```powershell
-copy .env.example .env
-```
-
-Update `.env` values as needed, especially `JWT_SIGNING_KEY`.
-
-### 2) Start everything
-
-From repo root:
-
-```powershell
-docker compose up --build
-```
-
-That one command builds and starts:
-- `postgres` (PostgreSQL)
-- `backend` (ASP.NET Core API)
-- `frontend` (Nginx serving React build)
-
-### URLs
-
-- Frontend: `http://localhost:5173`
-- Backend API (direct): `http://localhost:5005`
-- Backend API via frontend proxy: `http://localhost:5173/api`
-
-### Stop
-
-```powershell
-docker compose down
-```
-
-To also remove DB volume data:
-
-```powershell
-docker compose down -v
-```
+Tip: keep a consistent browser size (e.g., 1440x900), blur sensitive values, and use the same seed data so comparisons are clear.
