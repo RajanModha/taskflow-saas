@@ -209,6 +209,22 @@ export function TasksPage() {
         setEditingTaskId(null);
       }
       const nextPage = page > 1 && tasks.length === 1 ? page - 1 : page;
+
+      const result = await getTasks({
+        page: nextPage,
+        pageSize,
+        projectId: projectId!,
+        status,
+        priority,
+        dueFromUtc: dueFromUtc ? toIsoUtcFromDateInput(dueFromUtc) : null,
+        dueToUtc: dueToUtc ? toIsoUtcFromDateInput(dueToUtc) : null,
+        q: debouncedQ.trim() || undefined,
+        sortBy,
+        sortDir,
+      });
+
+      setTasks(result.items);
+      setTotalCount(result.totalCount);
       setPage(nextPage);
     } catch (e) {
       const apiError = e as NormalizedApiError;

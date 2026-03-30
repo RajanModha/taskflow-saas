@@ -91,7 +91,20 @@ export function ProjectsPage() {
       setMutationLoading(true);
       setError(null);
       await deleteProject(projectId);
+      if (editingId === projectId) {
+        setEditingId(null);
+      }
+
       const nextPage = page > 1 && projects.length === 1 ? page - 1 : page;
+      const result = await getProjects({
+        page: nextPage,
+        pageSize,
+        q: debouncedQ.trim() || undefined,
+        sortBy,
+        sortDir,
+      });
+      setProjects(result.items);
+      setTotalCount(result.totalCount);
       setPage(nextPage);
     } catch (e) {
       const apiError = e as NormalizedApiError;
