@@ -39,6 +39,7 @@ export function DashboardPage() {
         <div className="row gap">
           <Link to="/workspaces/create">Create workspace</Link>
           <Link to="/workspaces/join">Join workspace</Link>
+          <Link to="/projects">Manage projects</Link>
         </div>
       </section>
     </div>
