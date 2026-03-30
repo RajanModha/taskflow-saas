@@ -19,7 +19,7 @@ public sealed class GetDashboardStatsHandler(TaskFlowDbContext dbContext, ICurre
             throw new TenantContextMissingException();
         }
 
-        var cacheKey = $"dashboard_stats:{currentTenant.OrganizationId}";
+        var cacheKey = DashboardCacheKeys.DashboardStats(currentTenant.OrganizationId);
 
         return await cache.GetOrCreateAsync(cacheKey, async entry =>
         {

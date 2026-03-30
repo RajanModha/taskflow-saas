@@ -1,9 +1,11 @@
 using AutoMapper;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Application.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -11,7 +13,8 @@ namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 public sealed class CreateTaskHandler(
     TaskFlowDbContext dbContext,
     ICurrentTenant currentTenant,
-    IMapper mapper) : IRequestHandler<CreateTaskCommand, TaskDto?>
+    IMapper mapper,
+    IMemoryCache cache) : IRequestHandler<CreateTaskCommand, TaskDto?>
 {
     public async System.Threading.Tasks.Task<TaskDto?> Handle(CreateTaskCommand request, CancellationToken cancellationToken)
     {
@@ -45,6 +48,7 @@ public sealed class CreateTaskHandler(
         await dbContext.Tasks.AddAsync(task, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        cache.Remove(DashboardCacheKeys.DashboardStats(currentTenant.OrganizationId));
         return mapper.Map<TaskDto>(task);
     }
 }

@@ -1,12 +1,15 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using TaskFlow.Application.Dashboard;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class DeleteTaskHandler(
-    TaskFlowDbContext dbContext) : IRequestHandler<DeleteTaskCommand, bool>
+    TaskFlowDbContext dbContext,
+    IMemoryCache cache) : IRequestHandler<DeleteTaskCommand, bool>
 {
     public async Task<bool> Handle(DeleteTaskCommand request, CancellationToken cancellationToken)
     {
@@ -20,6 +23,8 @@ public sealed class DeleteTaskHandler(
 
         dbContext.Tasks.Remove(task);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        cache.Remove(DashboardCacheKeys.DashboardStats(task.OrganizationId));
         return true;
     }
 }
