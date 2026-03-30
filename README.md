@@ -65,3 +65,48 @@ npm run preview
 ## Run apps independently
 
 You do **not** need both running at once. Start **only** the API for backend work, or **only** Vite for UI work. Start both when you want the SPA to talk to the API from the browser.
+
+## Run with Docker (one command)
+
+TaskFlow can run fully containerized (frontend + backend + PostgreSQL) via Docker Compose.
+
+### 1) Create env file
+
+From repo root:
+
+```powershell
+copy .env.example .env
+```
+
+Update `.env` values as needed, especially `JWT_SIGNING_KEY`.
+
+### 2) Start everything
+
+From repo root:
+
+```powershell
+docker compose up --build
+```
+
+That one command builds and starts:
+- `postgres` (PostgreSQL)
+- `backend` (ASP.NET Core API)
+- `frontend` (Nginx serving React build)
+
+### URLs
+
+- Frontend: `http://localhost:5173`
+- Backend API (direct): `http://localhost:5005`
+- Backend API via frontend proxy: `http://localhost:5173/api`
+
+### Stop
+
+```powershell
+docker compose down
+```
+
+To also remove DB volume data:
+
+```powershell
+docker compose down -v
+```
