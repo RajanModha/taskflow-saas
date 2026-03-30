@@ -27,5 +27,11 @@ public sealed class RegisterRequestValidator : AbstractValidator<RegisterRequest
         RuleFor(x => x.ConfirmPassword)
             .Equal(x => x.Password)
             .WithMessage("Passwords must match.");
+
+        RuleFor(x => x.OrganizationName)
+            .NotEmpty()
+            .MaximumLength(128)
+            .Matches("^[\\p{L}0-9 _.-]+$")
+            .WithMessage("Organization name contains invalid characters.");
     }
 }

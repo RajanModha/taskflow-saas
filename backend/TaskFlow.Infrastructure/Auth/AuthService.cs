@@ -1,18 +1,34 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Auth;
 using TaskFlow.Domain.Common;
 using TaskFlow.Infrastructure.Identity;
+using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Entities;
 
 namespace TaskFlow.Infrastructure.Auth;
 
 public sealed class AuthService(
     UserManager<ApplicationUser> userManager,
+    TaskFlowDbContext dbContext,
     IJwtTokenGenerator tokenGenerator,
     TimeProvider timeProvider) : IAuthService
 {
     public async Task<RegisterOutcome> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
         var now = timeProvider.GetUtcNow().UtcDateTime;
+
+        var orgId = Guid.NewGuid();
+        var organization = new Organization
+        {
+            Id = orgId,
+            Name = request.OrganizationName,
+            JoinCode = GenerateJoinCode(),
+            CreatedAtUtc = now,
+        };
+
+        await dbContext.Organizations.AddAsync(organization, cancellationToken);
+
         var user = new ApplicationUser
         {
             Id = Guid.NewGuid(),
@@ -20,6 +36,7 @@ public sealed class AuthService(
             Email = request.Email,
             EmailConfirmed = false,
             CreatedAtUtc = now,
+            OrganizationId = orgId,
         };
 
         var createResult = await userManager.CreateAsync(user, request.Password);
@@ -36,7 +53,8 @@ public sealed class AuthService(
         }
 
         var roles = await userManager.GetRolesAsync(user);
-        var token = tokenGenerator.CreateAccessToken(user.Id, user.Email ?? string.Empty, roles, now, out var expires);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        var token = tokenGenerator.CreateAccessToken(user.Id, user.Email ?? string.Empty, roles, organization.Id, now, out var expires);
         var response = new AuthResponse(token, new DateTimeOffset(expires, TimeSpan.Zero), "Bearer");
         return new RegisterSucceeded(response);
     }
@@ -58,7 +76,12 @@ public sealed class AuthService(
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var roles = await userManager.GetRolesAsync(user);
-        var token = tokenGenerator.CreateAccessToken(user.Id, user.Email ?? string.Empty, roles, now, out var expires);
+        if (user.OrganizationId == Guid.Empty)
+        {
+            return new LoginFailed("User has not been assigned to a workspace.");
+        }
+
+        var token = tokenGenerator.CreateAccessToken(user.Id, user.Email ?? string.Empty, roles, user.OrganizationId, now, out var expires);
         return new LoginSucceeded(new AuthResponse(token, new DateTimeOffset(expires, TimeSpan.Zero), "Bearer"));
     }
 
@@ -70,8 +93,48 @@ public sealed class AuthService(
             return null;
         }
 
+        if (user.OrganizationId == Guid.Empty)
+        {
+            return new UserProfileResponse(
+                user.Id,
+                user.Email ?? string.Empty,
+                user.UserName ?? string.Empty,
+                Array.Empty<string>(),
+                Guid.Empty,
+                string.Empty,
+                string.Empty);
+        }
+
         var roles = await userManager.GetRolesAsync(user);
-        return new UserProfileResponse(user.Id, user.Email ?? string.Empty, user.UserName ?? string.Empty, roles.ToArray());
+        var organization = await dbContext.Organizations.FirstOrDefaultAsync(
+            o => o.Id == user.OrganizationId,
+            cancellationToken);
+
+        return new UserProfileResponse(
+            user.Id,
+            user.Email ?? string.Empty,
+            user.UserName ?? string.Empty,
+            roles.ToArray(),
+            user.OrganizationId,
+            organization?.Name ?? string.Empty,
+            organization?.JoinCode ?? string.Empty);
+    }
+
+    private static string GenerateJoinCode()
+    {
+        // Non-cryptographic is fine for a join code in dev; production can switch to stronger RNG.
+        // Format: 8 alphanumeric chars.
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        var bytes = new byte[8];
+        Random.Shared.NextBytes(bytes);
+        var chars = new char[8];
+
+        for (var i = 0; i < 8; i++)
+        {
+            chars[i] = alphabet[bytes[i] % alphabet.Length];
+        }
+
+        return new string(chars);
     }
 
     private static RegisterFailed ToRegisterFailure(IdentityResult result)

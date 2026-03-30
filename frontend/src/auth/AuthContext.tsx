@@ -15,6 +15,7 @@ import {
   isTokenLikelyExpired,
   setStoredSession,
 } from "./tokenStorage";
+import * as workspacesApi from "../api/workspacesApi";
 
 type AuthState = {
   user: UserProfile | null;
@@ -27,9 +28,12 @@ type AuthContextValue = AuthState & {
   register: (input: {
     email: string;
     userName: string;
+    organizationName: string;
     password: string;
     confirmPassword: string;
   }) => Promise<void>;
+  createWorkspace: (name: string) => Promise<void>;
+  joinWorkspace: (code: string) => Promise<void>;
   logout: () => void;
   refreshProfile: () => Promise<void>;
 };
@@ -94,10 +98,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (input: {
       email: string;
       userName: string;
+      organizationName: string;
       password: string;
       confirmPassword: string;
     }) => {
       const auth = await authApi.register(input);
+      setStoredSession({
+        accessToken: auth.accessToken,
+        expiresAtUtc: auth.expiresAtUtc,
+      });
+      await refreshProfile();
+    },
+    [refreshProfile],
+  );
+
+  const createWorkspace = useCallback(
+    async (name: string) => {
+      const auth = await workspacesApi.createWorkspace(name);
+      setStoredSession({
+        accessToken: auth.accessToken,
+        expiresAtUtc: auth.expiresAtUtc,
+      });
+      await refreshProfile();
+    },
+    [refreshProfile],
+  );
+
+  const joinWorkspace = useCallback(
+    async (code: string) => {
+      const auth = await workspacesApi.joinWorkspace(code);
       setStoredSession({
         accessToken: auth.accessToken,
         expiresAtUtc: auth.expiresAtUtc,
@@ -119,10 +148,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: Boolean(user),
       login,
       register,
+      createWorkspace,
+      joinWorkspace,
       logout,
       refreshProfile,
     }),
-    [user, isLoading, login, register, logout, refreshProfile],
+    [user, isLoading, login, register, createWorkspace, joinWorkspace, logout, refreshProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

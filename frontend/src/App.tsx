@@ -2,6 +2,8 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HomePage } from "./pages/HomePage";
+import { CreateWorkspacePage } from "./pages/CreateWorkspacePage";
+import { JoinWorkspacePage } from "./pages/JoinWorkspacePage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 
@@ -29,6 +31,8 @@ export default function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/workspaces/create" element={<CreateWorkspacePage />} />
+            <Route path="/workspaces/join" element={<JoinWorkspacePage />} />
           </Route>
         </Routes>
       </main>

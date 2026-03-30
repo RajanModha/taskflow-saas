@@ -4,6 +4,7 @@ using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using TaskFlow.API;
+using TaskFlow.API.Middleware;
 using TaskFlow.API.ExceptionHandling;
 using TaskFlow.Application;
 using TaskFlow.Infrastructure;
@@ -80,6 +81,7 @@ app.UseExceptionHandler();
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
+app.UseMiddleware<TenantGuardMiddleware>();
 app.UseAuthorization();
 app.MapControllers();
 

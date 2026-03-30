@@ -10,4 +10,5 @@ public sealed class User
     public string UserName { get; init; } = string.Empty;
     public DateTime CreatedAtUtc { get; init; }
     public IReadOnlyList<string> Roles { get; init; } = [];
+    public Guid OrganizationId { get; init; }
 }

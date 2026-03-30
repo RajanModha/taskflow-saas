@@ -9,6 +9,9 @@ export type UserProfile = {
   email: string;
   userName: string;
   roles: string[];
+  organizationId: string;
+  organizationName: string;
+  organizationJoinCode: string;
 };
 
 export type ProblemDetails = {

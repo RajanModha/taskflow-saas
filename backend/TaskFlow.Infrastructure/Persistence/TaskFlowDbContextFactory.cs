@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using TaskFlow.Application.Tenancy;
+using TaskFlow.Infrastructure.Tenancy;
 
 namespace TaskFlow.Infrastructure.Persistence;
 
@@ -15,6 +17,8 @@ public sealed class TaskFlowDbContextFactory : IDesignTimeDbContextFactory<TaskF
 
         var optionsBuilder = new DbContextOptionsBuilder<TaskFlowDbContext>();
         optionsBuilder.UseNpgsql(connectionString);
-        return new TaskFlowDbContext(optionsBuilder.Options);
+
+        ICurrentTenant currentTenant = new NoTenant();
+        return new TaskFlowDbContext(optionsBuilder.Options, currentTenant);
     }
 }

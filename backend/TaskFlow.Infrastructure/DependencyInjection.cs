@@ -4,10 +4,14 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Auth;
+using TaskFlow.Application.Tenancy;
+using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Identity;
+using TaskFlow.Infrastructure.Tenancy;
 using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Infrastructure.Services;
+using TaskFlow.Infrastructure.Workspaces;
 
 namespace TaskFlow.Infrastructure;
 
@@ -19,6 +23,9 @@ public static class DependencyInjection
         services.AddOptions<SeedOptions>().Bind(configuration.GetSection(SeedOptions.SectionName));
 
         services.AddSingleton(TimeProvider.System);
+
+        services.AddHttpContextAccessor();
+        services.AddScoped<ICurrentTenant, CurrentTenant>();
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (string.IsNullOrWhiteSpace(connectionString))
@@ -46,6 +53,7 @@ public static class DependencyInjection
 
         services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IWorkspaceService, WorkspaceService>();
         services.AddSingleton<IAppInfo, AppInfoService>();
         return services;
     }

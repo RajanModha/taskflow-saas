@@ -25,9 +25,21 @@ export function DashboardPage() {
         <dl className="kv">
           <dt>User name</dt>
           <dd>{user?.userName}</dd>
+          <dt>Workspace</dt>
+          <dd>{user?.organizationName || "—"}</dd>
+          <dt>Join code</dt>
+          <dd>{user?.organizationJoinCode || "—"}</dd>
           <dt>Roles</dt>
           <dd>{user?.roles.length ? user.roles.join(", ") : "—"}</dd>
         </dl>
+      </section>
+
+      <section className="panel">
+        <h2>Workspace actions</h2>
+        <div className="row gap">
+          <Link to="/workspaces/create">Create workspace</Link>
+          <Link to="/workspaces/join">Join workspace</Link>
+        </div>
       </section>
     </div>
   );

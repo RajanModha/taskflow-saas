@@ -12,6 +12,7 @@ export async function login(email: string, password: string) {
 export async function register(payload: {
   email: string;
   userName: string;
+  organizationName: string;
   password: string;
   confirmPassword: string;
 }) {

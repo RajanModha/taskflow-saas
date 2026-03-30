@@ -8,6 +8,7 @@ export function RegisterPage() {
   const { register } = useAuth();
   const [email, setEmail] = useState("");
   const [userName, setUserName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -23,6 +24,7 @@ export function RegisterPage() {
       await register({
         email: email.trim(),
         userName: userName.trim(),
+        organizationName: organizationName.trim(),
         password,
         confirmPassword,
       });
@@ -69,6 +71,21 @@ export function RegisterPage() {
           />
           {fieldErrors.userName?.length ? (
             <span className="error-text">{fieldErrors.userName.join(" ")}</span>
+          ) : null}
+        </label>
+        <label className="field">
+          <span>Workspace / Organization</span>
+          <input
+            autoComplete="organization"
+            name="organizationName"
+            value={organizationName}
+            onChange={(ev) => setOrganizationName(ev.target.value)}
+            required
+          />
+          {fieldErrors.organizationName?.length ? (
+            <span className="error-text">
+              {fieldErrors.organizationName.join(" ")}
+            </span>
           ) : null}
         </label>
         <label className="field">

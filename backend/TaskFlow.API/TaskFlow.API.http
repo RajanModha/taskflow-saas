@@ -14,7 +14,8 @@ Content-Type: application/json
   "email": "user@example.com",
   "userName": "demo.user",
   "password": "Str0ng!Pass",
-  "confirmPassword": "Str0ng!Pass"
+  "confirmPassword": "Str0ng!Pass",
+  "organizationName": "Acme Workspace"
 }
 
 ###
@@ -32,6 +33,34 @@ Content-Type: application/json
 
 ### Me (set @token from login/register response)
 @token = paste_jwt_here
+
+GET {{TaskFlow.API_HostAddress}}/api/auth/me
+Authorization: Bearer {{token}}
+
+###
+
+### Create Workspace (returns a new JWT)
+POST {{TaskFlow.API_HostAddress}}/api/workspaces
+Content-Type: application/json
+
+{
+  "name": "New Workspace"
+}
+
+### Note:
+### This endpoint returns a fresh JWT (with new org_id). Copy it and update @token below.
+@token = paste_new_jwt_here
+
+### Join Workspace (switch org using join code)
+POST {{TaskFlow.API_HostAddress}}/api/workspaces/join
+Content-Type: application/json
+
+{
+  "code": "PASTE_JOIN_CODE"
+}
+
+### After join, copy returned JWT and call /api/auth/me again.
+@token = paste_new_jwt_here_after_join
 
 GET {{TaskFlow.API_HostAddress}}/api/auth/me
 Authorization: Bearer {{token}}

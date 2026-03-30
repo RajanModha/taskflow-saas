@@ -11,7 +11,13 @@ public sealed class JwtTokenGenerator(IOptions<JwtSettings> options) : IJwtToken
 {
     private readonly JwtSettings _settings = options.Value;
 
-    public string CreateAccessToken(Guid userId, string email, IEnumerable<string> roles, DateTime utcNow, out DateTime expiresUtc)
+    public string CreateAccessToken(
+        Guid userId,
+        string email,
+        IEnumerable<string> roles,
+        Guid organizationId,
+        DateTime utcNow,
+        out DateTime expiresUtc)
     {
         if (string.IsNullOrWhiteSpace(_settings.SigningKey) || _settings.SigningKey.Length < 32)
         {
@@ -27,6 +33,7 @@ public sealed class JwtTokenGenerator(IOptions<JwtSettings> options) : IJwtToken
             new(JwtRegisteredClaimNames.Sub, userId.ToString()),
             new(JwtRegisteredClaimNames.Email, email),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new("org_id", organizationId.ToString()),
         };
         claims.AddRange(roleList.Select(r => new Claim(ClaimTypes.Role, r)));
 
