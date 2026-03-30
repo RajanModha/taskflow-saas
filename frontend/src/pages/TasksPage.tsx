@@ -41,6 +41,7 @@ export function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mutationLoading, setMutationLoading] = useState(false);
+  const [refreshIndex, setRefreshIndex] = useState(0);
 
   const [page, setPage] = useState(1);
   const pageSize = 20;
@@ -111,7 +112,7 @@ export function TasksPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, page, pageSize, debouncedQ, status, priority, dueFromUtc, dueToUtc, sortBy, sortDir]);
+  }, [projectId, page, pageSize, debouncedQ, status, priority, dueFromUtc, dueToUtc, sortBy, sortDir, refreshIndex]);
 
   async function onCreateTask() {
     if (!projectId) return;
@@ -133,20 +134,7 @@ export function TasksPage() {
       setCreateDescription("");
       setCreateDueDate("");
       setPage(1);
-      const result = await getTasks({
-        page: 1,
-        pageSize,
-        projectId,
-        status,
-        priority,
-        dueFromUtc: dueFromUtc ? toIsoUtcFromDateInput(dueFromUtc) : null,
-        dueToUtc: dueToUtc ? toIsoUtcFromDateInput(dueToUtc) : null,
-        q: debouncedQ.trim() || undefined,
-        sortBy,
-        sortDir,
-      });
-      setTasks(result.items);
-      setTotalCount(result.totalCount);
+      setRefreshIndex((i) => i + 1);
     } catch (e) {
       const apiError = e as NormalizedApiError;
       setError(apiError.detail ?? apiError.title ?? "Failed to create task.");
@@ -178,20 +166,7 @@ export function TasksPage() {
         dueDateUtc: editDueDate ? toIsoUtcFromDateInput(editDueDate) : null,
       });
       setEditingTaskId(null);
-      const result = await getTasks({
-        page,
-        pageSize,
-        projectId: projectId!,
-        status,
-        priority,
-        dueFromUtc: dueFromUtc ? toIsoUtcFromDateInput(dueFromUtc) : null,
-        dueToUtc: dueToUtc ? toIsoUtcFromDateInput(dueToUtc) : null,
-        q: debouncedQ.trim() || undefined,
-        sortBy,
-        sortDir,
-      });
-      setTasks(result.items);
-      setTotalCount(result.totalCount);
+      setRefreshIndex((i) => i + 1);
     } catch (e) {
       const apiError = e as NormalizedApiError;
       setError(apiError.detail ?? apiError.title ?? "Failed to update task.");
@@ -210,22 +185,8 @@ export function TasksPage() {
       }
       const nextPage = page > 1 && tasks.length === 1 ? page - 1 : page;
 
-      const result = await getTasks({
-        page: nextPage,
-        pageSize,
-        projectId: projectId!,
-        status,
-        priority,
-        dueFromUtc: dueFromUtc ? toIsoUtcFromDateInput(dueFromUtc) : null,
-        dueToUtc: dueToUtc ? toIsoUtcFromDateInput(dueToUtc) : null,
-        q: debouncedQ.trim() || undefined,
-        sortBy,
-        sortDir,
-      });
-
-      setTasks(result.items);
-      setTotalCount(result.totalCount);
       setPage(nextPage);
+      setRefreshIndex((i) => i + 1);
     } catch (e) {
       const apiError = e as NormalizedApiError;
       setError(apiError.detail ?? apiError.title ?? "Failed to delete task.");
@@ -238,8 +199,8 @@ export function TasksPage() {
     <div className="stack">
       <div className="toolbar">
         <div className="stack" style={{ gap: "0.35rem", maxWidth: 520 }}>
-          <h1 style={{ margin: 0 }}>Tasks</h1>
-          <p className="muted small" style={{ margin: 0 }}>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Tasks</h1>
+          <p className="muted small">
             Manage tasks within your workspace project.
           </p>
         </div>
@@ -252,7 +213,7 @@ export function TasksPage() {
       </div>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Task filters</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">Task filters</h2>
         <div className="row gap">
           <input
             style={{ flex: 1 }}
@@ -318,7 +279,7 @@ export function TasksPage() {
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Create task</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">Create task</h2>
         <div className="row gap">
           <input style={{ flex: 1 }} placeholder="Title" value={createTitle} onChange={(e) => setCreateTitle(e.target.value)} />
           <select value={createStatus} onChange={(e) => setCreateStatus(Number(e.target.value) as TaskStatus)}>
@@ -351,7 +312,7 @@ export function TasksPage() {
       <section className="panel">
         <div className="toolbar">
           <div className="stack" style={{ gap: "0.25rem" }}>
-            <h2 style={{ margin: 0 }}>Tasks</h2>
+            <h2 className="text-lg font-semibold tracking-tight text-slate-900">Tasks</h2>
             <span className="muted small">
               {totalCount} total • Page {page} of {totalPages}
             </span>
@@ -361,108 +322,112 @@ export function TasksPage() {
         {error ? <div className="error-banner">{error}</div> : null}
 
         {loading ? (
-          <div className="muted" style={{ padding: "1rem 0" }}>
-            Loading…
+          <div className="space-y-2 py-2">
+            <div className="skeleton h-12 w-full" />
+            <div className="skeleton h-12 w-full" />
+            <div className="skeleton h-12 w-full" />
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th style={{ width: 140 }}>Status</th>
-                <th style={{ width: 140 }}>Priority</th>
-                <th style={{ width: 160 }}>Due</th>
-                <th style={{ width: 220 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.length === 0 ? (
+          <div className="overflow-x-auto rounded-2xl border border-slate-200">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={5} className="muted">
-                    No tasks found.
-                  </td>
+                  <th>Title</th>
+                  <th style={{ width: 140 }}>Status</th>
+                  <th style={{ width: 140 }}>Priority</th>
+                  <th style={{ width: 160 }}>Due</th>
+                  <th style={{ width: 280 }}>Actions</th>
                 </tr>
-              ) : null}
+              </thead>
+              <tbody>
+                {tasks.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="muted">
+                      No tasks found.
+                    </td>
+                  </tr>
+                ) : null}
 
-              {tasks.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    {editingTaskId === t.id ? (
-                      <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ width: "100%" }} />
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
-                        <strong>{t.title}</strong>
-                        {t.description ? <span className="muted small">{t.description}</span> : null}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    {editingTaskId === t.id ? (
-                      <select value={editStatus} onChange={(e) => setEditStatus(Number(e.target.value) as TaskStatus)}>
-                        <option value={0}>Backlog</option>
-                        <option value={1}>Todo</option>
-                        <option value={2}>In Progress</option>
-                        <option value={3}>Done</option>
-                      </select>
-                    ) : (
-                      <span className="tag">{statusLabel[t.status] ?? "—"}</span>
-                    )}
-                  </td>
-                  <td>
-                    {editingTaskId === t.id ? (
-                      <select value={editPriority} onChange={(e) => setEditPriority(Number(e.target.value) as TaskPriority)}>
-                        <option value={0}>Low</option>
-                        <option value={1}>Medium</option>
-                        <option value={2}>High</option>
-                        <option value={3}>Urgent</option>
-                      </select>
-                    ) : (
-                      <span className="tag">{priorityLabel[t.priority] ?? "—"}</span>
-                    )}
-                  </td>
-                  <td>
-                    {editingTaskId === t.id ? (
-                      <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
-                    ) : (
-                      <span className="muted small">{toDateInputValue(t.dueDateUtc) || "—"}</span>
-                    )}
-                  </td>
-                  <td>
-                    {editingTaskId === t.id ? (
-                      <div className="actions">
-                        <input
-                          style={{ minWidth: 240 }}
-                          placeholder="Description"
-                          value={editDescription}
-                          onChange={(e) => setEditDescription(e.target.value)}
-                        />
-                        <div className="row gap" style={{ justifyContent: "flex-end", marginTop: "0.5rem" }}>
-                          <button className="button primary" type="button" onClick={onSaveEdit} disabled={mutationLoading}>
-                            Save
-                          </button>
-                          <button className="button" type="button" onClick={() => setEditingTaskId(null)} disabled={mutationLoading}>
-                            Cancel
+                {tasks.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      {editingTaskId === t.id ? (
+                        <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="w-full" />
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          <strong>{t.title}</strong>
+                          {t.description ? <span className="muted small">{t.description}</span> : null}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {editingTaskId === t.id ? (
+                        <select value={editStatus} onChange={(e) => setEditStatus(Number(e.target.value) as TaskStatus)}>
+                          <option value={0}>Backlog</option>
+                          <option value={1}>Todo</option>
+                          <option value={2}>In Progress</option>
+                          <option value={3}>Done</option>
+                        </select>
+                      ) : (
+                        <span className="tag">{statusLabel[t.status] ?? "-"}</span>
+                      )}
+                    </td>
+                    <td>
+                      {editingTaskId === t.id ? (
+                        <select value={editPriority} onChange={(e) => setEditPriority(Number(e.target.value) as TaskPriority)}>
+                          <option value={0}>Low</option>
+                          <option value={1}>Medium</option>
+                          <option value={2}>High</option>
+                          <option value={3}>Urgent</option>
+                        </select>
+                      ) : (
+                        <span className="tag">{priorityLabel[t.priority] ?? "-"}</span>
+                      )}
+                    </td>
+                    <td>
+                      {editingTaskId === t.id ? (
+                        <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} />
+                      ) : (
+                        <span className="muted small">{toDateInputValue(t.dueDateUtc) || "-"}</span>
+                      )}
+                    </td>
+                    <td>
+                      {editingTaskId === t.id ? (
+                        <div className="actions">
+                          <input
+                            className="min-w-[220px]"
+                            placeholder="Description"
+                            value={editDescription}
+                            onChange={(e) => setEditDescription(e.target.value)}
+                          />
+                          <div className="row gap">
+                            <button className="button primary" type="button" onClick={onSaveEdit} disabled={mutationLoading}>
+                              Save
+                            </button>
+                            <button className="button" type="button" onClick={() => setEditingTaskId(null)} disabled={mutationLoading}>
+                              Cancel
+                            </button>
+                            <button className="button" type="button" onClick={() => onDeleteTask(t.id)} disabled={mutationLoading}>
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="actions">
+                          <button className="button" type="button" onClick={() => startEdit(t)} disabled={mutationLoading}>
+                            Edit
                           </button>
                           <button className="button" type="button" onClick={() => onDeleteTask(t.id)} disabled={mutationLoading}>
                             Delete
                           </button>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="actions">
-                        <button className="button" type="button" onClick={() => startEdit(t)} disabled={mutationLoading}>
-                          Edit
-                        </button>
-                        <button className="button" type="button" onClick={() => onDeleteTask(t.id)} disabled={mutationLoading}>
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         <div className="row gap" style={{ justifyContent: "space-between", marginTop: "1rem" }}>

@@ -37,7 +37,7 @@ export function LoginPage() {
 
   return (
     <div className="auth-card">
-      <h1>Log in</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Log in</h1>
       <p className="muted small">
         New here? <Link to="/register">Create an account</Link>
       </p>

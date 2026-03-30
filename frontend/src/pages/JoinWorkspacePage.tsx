@@ -32,7 +32,7 @@ export function JoinWorkspacePage() {
 
   return (
     <div className="auth-card">
-      <h1>Join workspace</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Join workspace</h1>
       <p className="muted small">Join using your workspace join code.</p>
 
       <form className="stack gap" onSubmit={onSubmit}>

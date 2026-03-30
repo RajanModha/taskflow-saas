@@ -7,8 +7,12 @@ export function ProtectedRoute() {
 
   if (isLoading) {
     return (
-      <div className="page-center muted" role="status">
-        Loading session…
+      <div className="page-center" role="status">
+        <div className="w-full max-w-xl space-y-3">
+          <div className="skeleton h-6 w-40" />
+          <div className="skeleton h-20 w-full" />
+          <div className="skeleton h-20 w-full" />
+        </div>
       </div>
     );
   }

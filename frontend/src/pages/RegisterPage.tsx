@@ -40,7 +40,7 @@ export function RegisterPage() {
 
   return (
     <div className="auth-card">
-      <h1>Create account</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Create account</h1>
       <p className="muted small">
         Already have an account? <Link to="/login">Log in</Link>
       </p>

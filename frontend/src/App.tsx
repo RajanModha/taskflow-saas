@@ -31,7 +31,9 @@ export default function App() {
             TaskFlow
           </Link>
 
-          {isLoading ? null : isAuthenticated ? (
+          {isLoading ? (
+            <div className="skeleton h-8 w-28" />
+          ) : isAuthenticated ? (
             <>
               <NavLink
                 to="/dashboard"
@@ -58,7 +60,9 @@ export default function App() {
         <div className="landing-header">
           <div className="landing-brand">TaskFlow</div>
 
-          {isLoading ? null : isAuthenticated ? (
+          {isLoading ? (
+            <div className="skeleton h-9 w-24" />
+          ) : isAuthenticated ? (
             <div className="landing-actions">
               <Link to="/dashboard" className="button primary">
                 Dashboard

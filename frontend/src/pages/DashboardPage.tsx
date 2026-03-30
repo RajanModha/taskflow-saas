@@ -59,8 +59,8 @@ export function DashboardPage() {
       <section className="panel">
         <div className="dashboard-head">
           <div>
-            <h2 style={{ marginBottom: "0.2rem" }}>Analytics</h2>
-            <p className="muted small" style={{ margin: 0 }}>
+            <h2 className="mb-1 text-xl font-semibold tracking-tight text-slate-900">Analytics</h2>
+            <p className="muted small">
               Real-time task performance for your workspace.
             </p>
           </div>
@@ -73,7 +73,13 @@ export function DashboardPage() {
         {statsError ? <div className="error-banner">{statsError}</div> : null}
 
         {isLoadingStats ? (
-          <div className="muted">Loading analytics…</div>
+          <div className="space-y-3">
+            <div className="skeleton h-24 w-full" />
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <div className="skeleton h-72 w-full" />
+              <div className="skeleton h-72 w-full" />
+            </div>
+          </div>
         ) : (
           <>
             <div className="metrics-grid">
@@ -99,7 +105,7 @@ export function DashboardPage() {
       </section>
 
       <section className="panel">
-        <h2>Profile</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">Profile</h2>
         <dl className="kv">
           <dt>User name</dt>
           <dd>{user?.userName}</dd>
@@ -113,7 +119,7 @@ export function DashboardPage() {
       </section>
 
       <section className="panel">
-        <h2>Workspace actions</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">Workspace actions</h2>
         <div className="row gap">
           <Link to="/workspaces/create">Create workspace</Link>
           <Link to="/workspaces/join">Join workspace</Link>

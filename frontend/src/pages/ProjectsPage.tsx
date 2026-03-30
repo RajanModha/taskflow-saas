@@ -10,6 +10,7 @@ export function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mutationLoading, setMutationLoading] = useState(false);
+  const [refreshIndex, setRefreshIndex] = useState(0);
 
   const [page, setPage] = useState(1);
   const pageSize = 20;
@@ -63,7 +64,7 @@ export function ProjectsPage() {
     return () => {
       cancelled = true;
     };
-  }, [page, debouncedQ, sortBy, sortDir]);
+  }, [page, debouncedQ, sortBy, sortDir, refreshIndex]);
 
   async function onCreate() {
     const name = createName.trim();
@@ -75,9 +76,7 @@ export function ProjectsPage() {
       setCreateName("");
       setCreateDescription("");
       setPage(1);
-      const result = await getProjects({ page: 1, pageSize, q: debouncedQ.trim() || undefined, sortBy, sortDir });
-      setProjects(result.items);
-      setTotalCount(result.totalCount);
+      setRefreshIndex((i) => i + 1);
     } catch (e) {
       const apiError = e as NormalizedApiError;
       setError(apiError.detail ?? apiError.title ?? "Failed to create project.");
@@ -96,16 +95,8 @@ export function ProjectsPage() {
       }
 
       const nextPage = page > 1 && projects.length === 1 ? page - 1 : page;
-      const result = await getProjects({
-        page: nextPage,
-        pageSize,
-        q: debouncedQ.trim() || undefined,
-        sortBy,
-        sortDir,
-      });
-      setProjects(result.items);
-      setTotalCount(result.totalCount);
       setPage(nextPage);
+      setRefreshIndex((i) => i + 1);
     } catch (e) {
       const apiError = e as NormalizedApiError;
       setError(apiError.detail ?? apiError.title ?? "Failed to delete project.");
@@ -131,9 +122,7 @@ export function ProjectsPage() {
         description: editDescription.trim() || null,
       });
       setEditingId(null);
-      const result = await getProjects({ page, pageSize, q: debouncedQ.trim() || undefined, sortBy, sortDir });
-      setProjects(result.items);
-      setTotalCount(result.totalCount);
+      setRefreshIndex((i) => i + 1);
     } catch (e) {
       const apiError = e as NormalizedApiError;
       setError(apiError.detail ?? apiError.title ?? "Failed to update project.");
@@ -146,8 +135,8 @@ export function ProjectsPage() {
     <div className="stack">
       <div className="toolbar">
         <div className="stack" style={{ gap: "0.35rem", maxWidth: 520 }}>
-          <h1 style={{ margin: 0 }}>Projects</h1>
-          <p className="muted small" style={{ margin: 0 }}>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Projects</h1>
+          <p className="muted small">
             Create projects and manage tasks per workspace.
           </p>
         </div>
@@ -172,7 +161,7 @@ export function ProjectsPage() {
       </div>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Create project</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">Create project</h2>
         <div className="row gap">
           <input
             style={{ flex: 1 }}
@@ -197,7 +186,7 @@ export function ProjectsPage() {
       <section className="panel">
         <div className="toolbar">
           <div className="stack" style={{ gap: "0.25rem" }}>
-            <h2 style={{ margin: 0 }}>Your projects</h2>
+            <h2 className="text-lg font-semibold tracking-tight text-slate-900">Your projects</h2>
             <span className="muted small">
               {totalCount} total • Page {page} of {totalPages}
             </span>
@@ -218,76 +207,80 @@ export function ProjectsPage() {
         {error ? <div className="error-banner">{error}</div> : null}
 
         {loading ? (
-          <div className="muted" style={{ padding: "1rem 0" }}>
-            Loading…
+          <div className="space-y-2 py-2">
+            <div className="skeleton h-12 w-full" />
+            <div className="skeleton h-12 w-full" />
+            <div className="skeleton h-12 w-full" />
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 340 }}>Name</th>
-                <th>Description</th>
-                <th style={{ width: 180 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.length === 0 ? (
+          <div className="overflow-x-auto rounded-2xl border border-slate-200">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={3} className="muted">
-                    No projects yet.
-                  </td>
+                  <th style={{ width: 340 }}>Name</th>
+                  <th>Description</th>
+                  <th style={{ width: 220 }}>Actions</th>
                 </tr>
-              ) : null}
+              </thead>
+              <tbody>
+                {projects.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="muted">
+                      No projects yet.
+                    </td>
+                  </tr>
+                ) : null}
 
-              {projects.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    {editingId === p.id ? (
-                      <input value={editName} onChange={(e) => setEditName(e.target.value)} />
-                    ) : (
-                      <strong>{p.name}</strong>
-                    )}
-                  </td>
-                  <td>
-                    {editingId === p.id ? (
-                      <input value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
-                    ) : (
-                      <span className="muted small">{p.description || "—"}</span>
-                    )}
-                  </td>
-                  <td>
-                    {editingId === p.id ? (
-                      <div className="actions">
-                        <button className="button primary" type="button" onClick={onSaveEdit} disabled={mutationLoading}>
-                          Save
-                        </button>
-                        <button className="button" type="button" onClick={() => setEditingId(null)} disabled={mutationLoading}>
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="actions">
-                        <button
-                          className="button"
-                          type="button"
-                          disabled={mutationLoading}
-                          onClick={() => navigate(`/projects/${p.id}/tasks`)}
-                        >
-                          Tasks
-                        </button>
-                        <button className="button" type="button" onClick={() => startEdit(p)} disabled={mutationLoading}>
-                          Edit
-                        </button>
-                        <button className="button" type="button" onClick={() => onDelete(p.id)} disabled={mutationLoading}>
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                {projects.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      {editingId === p.id ? (
+                        <input value={editName} onChange={(e) => setEditName(e.target.value)} />
+                      ) : (
+                        <strong>{p.name}</strong>
+                      )}
+                    </td>
+                    <td>
+                      {editingId === p.id ? (
+                        <input value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
+                      ) : (
+                        <span className="muted small">{p.description || "-"}</span>
+                      )}
+                    </td>
+                    <td>
+                      {editingId === p.id ? (
+                        <div className="actions">
+                          <button className="button primary" type="button" onClick={onSaveEdit} disabled={mutationLoading}>
+                            Save
+                          </button>
+                          <button className="button" type="button" onClick={() => setEditingId(null)} disabled={mutationLoading}>
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="actions">
+                          <button
+                            className="button"
+                            type="button"
+                            disabled={mutationLoading}
+                            onClick={() => navigate(`/projects/${p.id}/tasks`)}
+                          >
+                            Tasks
+                          </button>
+                          <button className="button" type="button" onClick={() => startEdit(p)} disabled={mutationLoading}>
+                            Edit
+                          </button>
+                          <button className="button" type="button" onClick={() => onDelete(p.id)} disabled={mutationLoading}>
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         <div className="row gap" style={{ justifyContent: "space-between", marginTop: "1rem" }}>

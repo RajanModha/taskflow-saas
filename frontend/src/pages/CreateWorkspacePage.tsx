@@ -32,7 +32,7 @@ export function CreateWorkspacePage() {
 
   return (
     <div className="auth-card">
-      <h1>Create workspace</h1>
+      <h1 className="text-2xl font-bold tracking-tight text-slate-900">Create workspace</h1>
       <p className="muted small">Create a new organization and switch to it.</p>
 
       <form className="stack gap" onSubmit={onSubmit}>
