@@ -13,6 +13,7 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<TaskFlow.Domain.Entities.Task> Tasks => Set<TaskFlow.Domain.Entities.Task>();
+    public DbSet<SeedRun> SeedRuns => Set<SeedRun>();
 
     public TaskFlowDbContext(
         DbContextOptions<TaskFlowDbContext> options,
@@ -61,6 +62,7 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
             entity.Property(p => p.OrganizationId).IsRequired();
 
+            // Fail-closed tenant filter: no tenant context means no data returned.
             entity.HasQueryFilter(p => _currentTenant.IsSet && p.OrganizationId == _currentTenant.OrganizationId);
             entity.HasIndex(p => p.OrganizationId);
             entity.HasIndex(p => new { p.Id, p.OrganizationId }).IsUnique();
@@ -87,6 +89,7 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity
                 .HasOne(d => d.Project)
                 .WithMany()
+                // Enforce tenant-safe relationship: task can only point to project in same org.
                 .HasForeignKey(t => new { t.ProjectId, t.OrganizationId })
                 .HasPrincipalKey(nameof(Project.Id), nameof(Project.OrganizationId))
                 .OnDelete(DeleteBehavior.Cascade);
@@ -96,6 +99,13 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
         {
             entity.Property(r => r.Name).HasMaxLength(64);
             entity.Property(r => r.NormalizedName).HasMaxLength(64);
+        });
+
+        builder.Entity<SeedRun>(entity =>
+        {
+            entity.Property(s => s.Key).HasMaxLength(128).IsRequired();
+            entity.Property(s => s.AppliedAtUtc).IsRequired();
+            entity.HasIndex(s => s.Key).IsUnique();
         });
     }
 }

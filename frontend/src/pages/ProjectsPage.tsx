@@ -10,6 +10,7 @@ export function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mutationLoading, setMutationLoading] = useState(false);
+  // Increment to force a list refetch after successful mutations.
   const [refreshIndex, setRefreshIndex] = useState(0);
 
   const [page, setPage] = useState(1);

@@ -3,6 +3,7 @@ import { Suspense, useEffect, useMemo, useState, lazy } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { getDashboardStats, type DashboardStats } from "../api/dashboardApi";
 import type { NormalizedApiError } from "../api/http";
+// Charts are lazy-loaded to keep the first dashboard paint fast.
 const DashboardCharts = lazy(() => import("./DashboardCharts").then((m) => ({ default: m.DashboardCharts })));
 
 export function DashboardPage() {

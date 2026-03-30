@@ -44,6 +44,7 @@ builder.Services.AddFluentValidationClientsideAdapters();
 
 builder.Services.AddApiVersioning(options =>
 {
+    // Keep v1 as the safe default while allowing opt-in version headers/query.
     options.DefaultApiVersion = new ApiVersion(1, 0);
     options.AssumeDefaultVersionWhenUnspecified = true;
     options.ReportApiVersions = true;
@@ -106,6 +107,7 @@ builder.Services.AddAuthentication(options =>
     })
     .AddJwtBearer(options =>
     {
+        // JWT validation is strict to avoid accepting cross-audience tokens.
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -132,6 +134,7 @@ builder.Services.AddCors(options =>
         "Frontend",
         policy =>
         {
+            // Local SPA and Docker-exposed frontend URLs.
             policy
                 .WithOrigins("http://localhost:5173", "https://localhost:5173")
                 .AllowAnyHeader()
@@ -161,6 +164,7 @@ app.UseExceptionHandler();
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
+// Tenant guard runs after auth so claim-based org resolution is available.
 app.UseMiddleware<TenantGuardMiddleware>();
 app.UseAuthorization();
 app.MapControllers();

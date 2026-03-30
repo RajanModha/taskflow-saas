@@ -3,11 +3,14 @@ import type { ProblemDetails } from "./types";
 import { clearStoredToken, getStoredToken } from "../auth/tokenStorage";
 
 const baseURL =
+  // In Docker, frontend uses `/api` and Nginx proxies to backend.
+  // In local dev, this points directly to the API host.
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ??
   "http://localhost:5005";
 
 export const http = axios.create({
   baseURL,
+  timeout: 15000,
   headers: {
     "Content-Type": "application/json",
   },

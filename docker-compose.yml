@@ -32,6 +32,12 @@ services:
       Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES}
       Seed__AdminEmail: ${SEED_ADMIN_EMAIL}
       Seed__AdminPassword: ${SEED_ADMIN_PASSWORD}
+      Seed__DemoDataEnabled: ${SEED_DEMO_DATA_ENABLED}
+      Seed__DemoOrganizationsCount: ${SEED_DEMO_ORGANIZATIONS_COUNT}
+      Seed__DemoUsersPerOrganization: ${SEED_DEMO_USERS_PER_ORGANIZATION}
+      Seed__DemoProjectsPerOrganization: ${SEED_DEMO_PROJECTS_PER_ORGANIZATION}
+      Seed__DemoTasksPerProject: ${SEED_DEMO_TASKS_PER_PROJECT}
+      Seed__DemoUserPassword: ${SEED_DEMO_USER_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy

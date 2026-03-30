@@ -11,7 +11,7 @@ COPY TaskFlow.Infrastructure/TaskFlow.Infrastructure.csproj TaskFlow.Infrastruct
 RUN dotnet restore TaskFlow.API/TaskFlow.API.csproj
 
 COPY . .
-RUN dotnet publish TaskFlow.API/TaskFlow.API.csproj -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish TaskFlow.API/TaskFlow.API.csproj -c Release -o /app/publish /p:UseAppHost=false --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
