@@ -2,10 +2,12 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Application.Dashboard;
+using Asp.Versioning;
 
 namespace TaskFlow.API.Controllers;
 
 [ApiController]
+[ApiVersion("1.0")]
 [Authorize]
 [Route("api/[controller]")]
 public sealed class DashboardController(IMediator mediator) : ControllerBase

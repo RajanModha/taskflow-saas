@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Asp.Versioning;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
 using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
@@ -9,6 +10,7 @@ using TaskPriority = TaskFlow.Domain.Entities.TaskPriority;
 namespace TaskFlow.API.Controllers;
 
 [ApiController]
+[ApiVersion("1.0")]
 [Authorize]
 [Route("api/[controller]")]
 public sealed class TasksController(IMediator mediator) : ControllerBase

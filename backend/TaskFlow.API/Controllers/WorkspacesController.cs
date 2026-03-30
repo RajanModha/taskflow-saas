@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Application.Auth;
 using TaskFlow.Application.Workspaces;
+using Asp.Versioning;
 
 namespace TaskFlow.API.Controllers;
 
 [ApiController]
+[ApiVersion("1.0")]
 [Authorize]
 [Route("api/[controller]")]
 public sealed class WorkspacesController(IWorkspaceService workspaceService) : ControllerBase

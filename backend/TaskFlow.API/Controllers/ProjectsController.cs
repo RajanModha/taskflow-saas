@@ -1,12 +1,14 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Asp.Versioning;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Projects;
 
 namespace TaskFlow.API.Controllers;
 
 [ApiController]
+[ApiVersion("1.0")]
 [Authorize]
 [Route("api/[controller]")]
 public sealed class ProjectsController(IMediator mediator) : ControllerBase
