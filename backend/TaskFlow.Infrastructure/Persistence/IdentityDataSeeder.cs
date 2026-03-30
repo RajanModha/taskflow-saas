@@ -12,7 +12,7 @@ namespace TaskFlow.Infrastructure.Persistence;
 
 public static class IdentityDataSeeder
 {
-    public static async Task SeedAsync(IServiceProvider services, CancellationToken cancellationToken = default)
+    public static async System.Threading.Tasks.Task SeedAsync(IServiceProvider services, CancellationToken cancellationToken = default)
     {
         var roleManager = services.GetRequiredService<RoleManager<ApplicationRole>>();
         var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
@@ -102,6 +102,7 @@ public static class IdentityDataSeeder
 
         // Ensure any previously created users (before multi-tenancy) get assigned.
         var existingUsersNeedingOrg = await dbContext.Users
+            .IgnoreQueryFilters()
             .Where(u => u.OrganizationId == Guid.Empty)
             .ToListAsync(cancellationToken);
 

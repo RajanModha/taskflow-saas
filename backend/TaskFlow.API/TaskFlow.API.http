@@ -39,6 +39,92 @@ Authorization: Bearer {{token}}
 
 ###
 
+### Projects (authenticated)
+@token = paste_jwt_here
+
+### List projects
+GET {{TaskFlow.API_HostAddress}}/api/projects?page=1&pageSize=20&q=&sortBy=createdatutc&sortDir=desc
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Create project
+POST {{TaskFlow.API_HostAddress}}/api/projects
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Roadmap 2026",
+  "description": "Quarterly planning"
+}
+
+### Get project by id
+@projectId = paste_project_guid_here
+GET {{TaskFlow.API_HostAddress}}/api/projects/{{projectId}}
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Update project
+PUT {{TaskFlow.API_HostAddress}}/api/projects/{{projectId}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Roadmap 2026 (updated)",
+  "description": "Quarterly planning (updated)"
+}
+
+### Delete project
+DELETE {{TaskFlow.API_HostAddress}}/api/projects/{{projectId}}
+Authorization: Bearer {{token}}
+
+###
+
+### Tasks (authenticated)
+### List tasks for a project
+@projectId = paste_project_guid_here
+GET {{TaskFlow.API_HostAddress}}/api/tasks?page=1&pageSize=20&projectId={{projectId}}&status=&priority=&q=&sortBy=createdatutc&sortDir=desc
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Create task
+POST {{TaskFlow.API_HostAddress}}/api/tasks
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "projectId": "{{projectId}}",
+  "title": "Define Q2 scope",
+  "description": "Decide milestones and owners",
+  "status": 1,
+  "priority": 2,
+  "dueDateUtc": "2026-04-10T00:00:00Z"
+}
+
+### Get task by id
+@taskId = paste_task_guid_here
+GET {{TaskFlow.API_HostAddress}}/api/tasks/{{taskId}}
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Update task
+PUT {{TaskFlow.API_HostAddress}}/api/tasks/{{taskId}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "title": "Define Q2 scope (updated)",
+  "description": "Decide milestones and owners (updated)",
+  "status": 2,
+  "priority": 3,
+  "dueDateUtc": "2026-04-18T00:00:00Z"
+}
+
+### Delete task
+DELETE {{TaskFlow.API_HostAddress}}/api/tasks/{{taskId}}
+Authorization: Bearer {{token}}
+
+###
+
 ### Create Workspace (returns a new JWT)
 POST {{TaskFlow.API_HostAddress}}/api/workspaces
 Content-Type: application/json

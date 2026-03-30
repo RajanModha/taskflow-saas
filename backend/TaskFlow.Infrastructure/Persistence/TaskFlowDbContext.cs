@@ -11,6 +11,8 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
     private readonly ICurrentTenant _currentTenant;
 
     public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<Project> Projects => Set<Project>();
+    public DbSet<TaskFlow.Domain.Entities.Task> Tasks => Set<TaskFlow.Domain.Entities.Task>();
 
     public TaskFlowDbContext(
         DbContextOptions<TaskFlowDbContext> options,
@@ -47,7 +49,47 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
                 .OnDelete(DeleteBehavior.Restrict);
 
             // Tenant isolation: all org-scoped entities should be filtered by org_id.
-            entity.HasQueryFilter(u => !_currentTenant.IsSet || u.OrganizationId == _currentTenant.OrganizationId);
+            entity.HasQueryFilter(u => _currentTenant.IsSet && u.OrganizationId == _currentTenant.OrganizationId);
+        });
+
+        builder.Entity<Project>(entity =>
+        {
+            entity.Property(p => p.Name).HasMaxLength(160).IsRequired();
+            entity.Property(p => p.Description).HasMaxLength(2000);
+            entity.Property(p => p.CreatedAtUtc).IsRequired();
+            entity.Property(p => p.UpdatedAtUtc).IsRequired();
+
+            entity.Property(p => p.OrganizationId).IsRequired();
+
+            entity.HasQueryFilter(p => _currentTenant.IsSet && p.OrganizationId == _currentTenant.OrganizationId);
+            entity.HasIndex(p => p.OrganizationId);
+            entity.HasIndex(p => new { p.Id, p.OrganizationId }).IsUnique();
+        });
+
+        builder.Entity<TaskFlow.Domain.Entities.Task>(entity =>
+        {
+            entity.Property(t => t.Title).HasMaxLength(200).IsRequired();
+            entity.Property(t => t.Description).HasMaxLength(4000);
+            entity.Property(t => t.Status).IsRequired();
+            entity.Property(t => t.Priority).IsRequired();
+            entity.Property(t => t.DueDateUtc);
+            entity.Property(t => t.CreatedAtUtc).IsRequired();
+            entity.Property(t => t.UpdatedAtUtc).IsRequired();
+
+            entity.Property(t => t.OrganizationId).IsRequired();
+
+            entity.HasQueryFilter(t => _currentTenant.IsSet && t.OrganizationId == _currentTenant.OrganizationId);
+            entity.HasIndex(t => t.OrganizationId);
+            entity.HasIndex(t => new { t.OrganizationId, t.ProjectId });
+            entity.HasIndex(t => new { t.OrganizationId, t.CreatedAtUtc });
+            entity.HasIndex(t => new { t.OrganizationId, t.DueDateUtc });
+
+            entity
+                .HasOne(d => d.Project)
+                .WithMany()
+                .HasForeignKey(t => new { t.ProjectId, t.OrganizationId })
+                .HasPrincipalKey(nameof(Project.Id), nameof(Project.OrganizationId))
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<ApplicationRole>(entity =>

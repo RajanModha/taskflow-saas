@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using TaskFlow.Application.Common;
 
 namespace TaskFlow.API.ExceptionHandling;
 
@@ -11,16 +12,43 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
         Exception exception,
         CancellationToken cancellationToken)
     {
-        logger.LogError(exception, "Unhandled exception");
+        var (status, title, type) = exception switch
+        {
+            TenantContextMissingException => (
+                StatusCodes.Status401Unauthorized,
+                "Tenant context missing",
+                "https://httpstatuses.com/401"),
+            UnauthorizedAccessException => (
+                StatusCodes.Status403Forbidden,
+                "Forbidden",
+                "https://httpstatuses.com/403"),
+            InvalidOperationException => (
+                StatusCodes.Status400BadRequest,
+                "Invalid operation",
+                "https://httpstatuses.com/400"),
+            _ => (
+                StatusCodes.Status500InternalServerError,
+                "Server error",
+                "https://httpstatuses.com/500"),
+        };
+
+        if (status >= 500)
+        {
+            logger.LogError(exception, "Unhandled exception");
+        }
+        else
+        {
+            logger.LogWarning(exception, "Handled application exception");
+        }
 
         var problem = new ProblemDetails
         {
-            Title = "Server error",
+            Title = title,
             Detail = environment.IsDevelopment()
                 ? exception.Message
                 : "An unexpected error occurred.",
-            Status = StatusCodes.Status500InternalServerError,
-            Type = "https://httpstatuses.com/500",
+            Status = status,
+            Type = type,
         };
 
         httpContext.Response.StatusCode = problem.Status ?? StatusCodes.Status500InternalServerError;

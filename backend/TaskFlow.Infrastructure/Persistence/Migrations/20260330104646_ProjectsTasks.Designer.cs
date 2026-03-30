@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TaskFlow.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using TaskFlow.Infrastructure.Persistence;
 namespace TaskFlow.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TaskFlowDbContext))]
-    partial class TaskFlowDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260330104646_ProjectsTasks")]
+    partial class ProjectsTasks
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -178,11 +181,6 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("Id", "OrganizationId")
-                        .IsUnique();
-
                     b.ToTable("Projects");
                 });
 
@@ -224,15 +222,7 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("OrganizationId", "CreatedAtUtc");
-
-                    b.HasIndex("OrganizationId", "DueDateUtc");
-
-                    b.HasIndex("OrganizationId", "ProjectId");
-
-                    b.HasIndex("ProjectId", "OrganizationId");
+                    b.HasIndex("ProjectId");
 
                     b.ToTable("Tasks");
                 });
@@ -392,8 +382,7 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("TaskFlow.Domain.Entities.Project", "Project")
                         .WithMany()
-                        .HasForeignKey("ProjectId", "OrganizationId")
-                        .HasPrincipalKey("Id", "OrganizationId")
+                        .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
