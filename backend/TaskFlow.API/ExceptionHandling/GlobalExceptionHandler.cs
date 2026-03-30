@@ -23,9 +23,9 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
                 "Forbidden",
                 "https://httpstatuses.com/403"),
             InvalidOperationException => (
-                StatusCodes.Status400BadRequest,
-                "Invalid operation",
-                "https://httpstatuses.com/400"),
+                StatusCodes.Status500InternalServerError,
+                "Server error",
+                "https://httpstatuses.com/500"),
             _ => (
                 StatusCodes.Status500InternalServerError,
                 "Server error",

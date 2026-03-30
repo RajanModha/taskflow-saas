@@ -125,6 +125,13 @@ Authorization: Bearer {{token}}
 
 ###
 
+### Dashboard analytics
+GET {{TaskFlow.API_HostAddress}}/api/dashboard/stats
+Authorization: Bearer {{token}}
+Accept: application/json
+
+###
+
 ### Create Workspace (returns a new JWT)
 POST {{TaskFlow.API_HostAddress}}/api/workspaces
 Content-Type: application/json
