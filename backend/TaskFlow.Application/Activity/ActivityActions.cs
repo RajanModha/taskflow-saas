@@ -25,6 +25,8 @@ public static class ActivityActions
 
     public const string TaskChecklistItemCompleted = "task.checklist_item_completed";
 
+    public const string TaskCreatedFromTemplate = "task.created_from_template";
+
     public const string ProjectCreated = "project.created";
 
     public const string ProjectUpdated = "project.updated";

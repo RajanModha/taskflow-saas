@@ -38,6 +38,8 @@ public sealed class Task : ISoftDeletable
 
     public Guid? MilestoneId { get; set; }
 
+    public Guid? TemplateId { get; set; }
+
     public bool ReminderSent { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }

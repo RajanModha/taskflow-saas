@@ -51,6 +51,7 @@ internal static class TaskProjection
             checklistProgress,
             task.IsDeleted,
             task.DeletedAt,
+            task.TemplateId,
             task.RowVersion);
 
     public static async Task<List<TaskDto>> ToDtosAsync(

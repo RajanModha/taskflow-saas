@@ -25,6 +25,18 @@ namespace TaskFlow.API.Controllers;
 [Route("api/v{version:apiVersion}/[controller]")]
 public sealed class TasksController(IMediator mediator, ITaskRepository taskRepository) : ControllerBase
 {
+    public sealed record CreateTaskFromTemplateOverridesRequest(
+        string? Title,
+        string? Description,
+        TaskPriority? Priority,
+        DateTime? DueDateUtc,
+        Guid? AssigneeId);
+
+    public sealed record CreateTaskFromTemplateRequest(
+        Guid TemplateId,
+        Guid ProjectId,
+        CreateTaskFromTemplateOverridesRequest? Overrides);
+
     public sealed record UpdateTaskRequest(
         string Title,
         string? Description,
@@ -495,6 +507,37 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
             ModelState.AddModelError(
                 "projectId",
                 "Project was not found in your workspace, the assignee is invalid, the milestone is invalid, or one or more tags are not in this workspace.");
+            return ValidationProblem(ModelState);
+        }
+
+        return CreatedAtAction(nameof(GetById), new { taskId = created.Id }, created);
+    }
+
+    [HttpPost("from-template")]
+    [ProducesResponseType(typeof(TaskDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<TaskDto>> CreateFromTemplate(
+        [FromBody] CreateTaskFromTemplateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var command = new CreateTaskFromTemplateCommand(
+            request.TemplateId,
+            request.ProjectId,
+            request.Overrides is null
+                ? null
+                : new CreateTaskFromTemplateOverrides(
+                    request.Overrides.Title,
+                    request.Overrides.Description,
+                    request.Overrides.Priority,
+                    request.Overrides.DueDateUtc,
+                    request.Overrides.AssigneeId));
+
+        var created = await mediator.Send(command, cancellationToken);
+        if (created is null)
+        {
+            ModelState.AddModelError(
+                "templateId",
+                "Template or project was not found in your workspace, or the assignee is invalid.");
             return ValidationProblem(ModelState);
         }
 

@@ -28,6 +28,7 @@ public sealed record TaskDto(
     decimal ChecklistProgress,
     bool IsDeleted,
     DateTime? DeletedAt,
+    Guid? TemplateId,
     uint RowVersion);
 
 public sealed record ChecklistItemDto(

@@ -70,6 +70,7 @@ public static class DependencyInjection
         services.AddScoped<IWorkspaceService, WorkspaceService>();
         services.AddScoped<IWorkspaceManagementService, WorkspaceManagementService>();
         services.AddScoped<IWorkspaceTagService, WorkspaceTagService>();
+        services.AddScoped<IWorkspaceTaskTemplateService, WorkspaceTaskTemplateService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddSingleton<IAppInfo, AppInfoService>();
         services.AddDataProtection();

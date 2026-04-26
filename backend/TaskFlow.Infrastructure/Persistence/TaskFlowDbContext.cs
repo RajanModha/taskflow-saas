@@ -41,6 +41,12 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
     public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
 
+    public DbSet<TaskTemplate> TaskTemplates => Set<TaskTemplate>();
+
+    public DbSet<TaskTemplateChecklistItem> TaskTemplateChecklistItems => Set<TaskTemplateChecklistItem>();
+
+    public DbSet<TaskTemplateTag> TaskTemplateTags => Set<TaskTemplateTag>();
+
     public TaskFlowDbContext(
         DbContextOptions<TaskFlowDbContext> options,
         ICurrentTenant currentTenant)
@@ -165,6 +171,7 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.HasIndex(t => t.OrganizationId);
             entity.HasIndex(t => t.IsDeleted);
             entity.HasIndex(t => new { t.OrganizationId, t.ProjectId });
+            entity.HasIndex(t => new { t.OrganizationId, t.TemplateId });
             entity.HasIndex(t => new { t.OrganizationId, t.CreatedAtUtc });
             entity.HasIndex(t => new { t.OrganizationId, t.DueDateUtc });
 
@@ -186,6 +193,12 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
                 .HasOne(t => t.Milestone)
                 .WithMany(m => m.Tasks)
                 .HasForeignKey(t => t.MilestoneId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity
+                .HasOne<TaskTemplate>()
+                .WithMany()
+                .HasForeignKey(t => t.TemplateId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -398,6 +411,67 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
             entity.HasQueryFilter(
                 d => _currentTenant.IsSet && d.Webhook!.OrganizationId == _currentTenant.OrganizationId);
+        });
+
+        builder.Entity<TaskTemplate>(entity =>
+        {
+            entity.Property(t => t.Name).HasMaxLength(100).IsRequired();
+            entity.Property(t => t.Description).HasMaxLength(500);
+            entity.Property(t => t.DefaultTitle).HasMaxLength(200).IsRequired();
+            entity.Property(t => t.DefaultDescription).HasMaxLength(4000);
+            entity.Property(t => t.DefaultPriority).IsRequired();
+            entity.Property(t => t.CreatedAtUtc).IsRequired();
+            entity.Property(t => t.UpdatedAtUtc).IsRequired();
+
+            entity.HasIndex(t => new { t.OrganizationId, t.Name }).IsUnique();
+
+            entity
+                .HasOne(t => t.Organization)
+                .WithMany()
+                .HasForeignKey(t => t.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity
+                .HasOne<ApplicationUser>()
+                .WithMany()
+                .HasForeignKey(t => t.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasQueryFilter(t => _currentTenant.IsSet && t.OrganizationId == _currentTenant.OrganizationId);
+        });
+
+        builder.Entity<TaskTemplateChecklistItem>(entity =>
+        {
+            entity.Property(i => i.Title).HasMaxLength(200).IsRequired();
+            entity.Property(i => i.Order).HasColumnName("item_order");
+
+            entity
+                .HasOne(i => i.Template)
+                .WithMany(t => t.ChecklistItems)
+                .HasForeignKey(i => i.TemplateId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(i => new { i.TemplateId, i.Order });
+            entity.HasQueryFilter(i => _currentTenant.IsSet && i.Template.OrganizationId == _currentTenant.OrganizationId);
+        });
+
+        builder.Entity<TaskTemplateTag>(entity =>
+        {
+            entity.HasKey(x => new { x.TemplateId, x.TagId });
+
+            entity
+                .HasOne(x => x.Template)
+                .WithMany(t => t.TaskTemplateTags)
+                .HasForeignKey(x => x.TemplateId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity
+                .HasOne(x => x.Tag)
+                .WithMany()
+                .HasForeignKey(x => x.TagId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(x => _currentTenant.IsSet && x.Template.OrganizationId == _currentTenant.OrganizationId);
         });
 
         builder.Entity<ApplicationRole>(entity =>

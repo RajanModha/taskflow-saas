@@ -19,6 +19,7 @@ public sealed class WorkspacesController(
     IWorkspaceService workspaceService,
     IWorkspaceManagementService workspaceManagement,
     IWorkspaceTagService workspaceTagService,
+    IWorkspaceTaskTemplateService workspaceTaskTemplateService,
     IWorkspaceWebhookService workspaceWebhookService) : ControllerBase
 {
     [HttpGet("me")]
@@ -334,6 +335,93 @@ public sealed class WorkspacesController(
             WorkspaceFailed f => ValidationWorkspaceErrors(f.Errors),
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
         };
+    }
+
+    [HttpGet("task-templates")]
+    [ProducesResponseType(typeof(IReadOnlyList<TaskTemplateDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ListTaskTemplates(CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await workspaceTaskTemplateService.ListTemplatesAsync(userId.Value, cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpGet("task-templates/{templateId:guid}")]
+    [ProducesResponseType(typeof(TaskTemplateDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTaskTemplate(Guid templateId, CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await workspaceTaskTemplateService.GetTemplateAsync(userId.Value, templateId, cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost("task-templates")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(TaskTemplateDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateTaskTemplate(
+        [FromBody] CreateTaskTemplateRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var (status, body) = await workspaceTaskTemplateService.CreateTemplateAsync(userId.Value, request, cancellationToken);
+        return status == StatusCodes.Status201Created
+            ? CreatedAtAction(nameof(GetTaskTemplate), new { templateId = ((TaskTemplateDto)body!).Id }, body)
+            : StatusCode(status, body);
+    }
+
+    [HttpPut("task-templates/{templateId:guid}")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(TaskTemplateDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateTaskTemplate(
+        Guid templateId,
+        [FromBody] UpdateTaskTemplateRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var (status, body) = await workspaceTaskTemplateService.UpdateTemplateAsync(userId.Value, templateId, request, cancellationToken);
+        return StatusCode(status, body);
+    }
+
+    [HttpDelete("task-templates/{templateId:guid}")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteTaskTemplate(Guid templateId, CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var status = await workspaceTaskTemplateService.DeleteTemplateAsync(userId.Value, templateId, cancellationToken);
+        return status == StatusCodes.Status204NoContent ? NoContent() : NotFound();
     }
 
     [HttpGet("webhooks")]
