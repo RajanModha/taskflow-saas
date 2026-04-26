@@ -197,7 +197,8 @@ public sealed class DeleteMilestoneCommandHandler(
         }
 
         await dbContext.Tasks
-            .Where(t => t.MilestoneId == milestone.Id)
+            .IgnoreQueryFilters()
+            .Where(t => t.MilestoneId == milestone.Id && t.OrganizationId == milestone.OrganizationId)
             .ExecuteUpdateAsync(
                 s => s.SetProperty(t => t.MilestoneId, (Guid?)null),
                 cancellationToken);
