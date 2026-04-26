@@ -56,7 +56,7 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
     public sealed record ReorderChecklistRequest(Guid[] OrderedIds);
     public sealed record BulkDeleteRequest(Guid[] TaskIds);
     public sealed record BulkAssignRequest(Guid[] TaskIds, Guid? AssigneeId);
-    public sealed record ExportLimitResponse(string Detail);
+    public sealed record TasksExportLimitResponse(string Detail);
 
     [HttpGet]
     [ProducesResponseType(typeof(PagedResultDto<TaskDto>), StatusCodes.Status200OK)]
@@ -137,7 +137,7 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
     [EnableRateLimiting("export")]
     [Produces("text/csv", "application/json")]
     [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ExportLimitResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(TasksExportLimitResponse), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Export(
         [FromQuery] Guid? projectId = null,
         [FromQuery] string? status = null,
@@ -192,7 +192,7 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
         var total = await taskRepository.GetExportCountAsync(filters, cancellationToken);
         if (total > 10_000)
         {
-            return BadRequest(new ExportLimitResponse("Narrow your filters. Max 10,000 rows."));
+            return BadRequest(new TasksExportLimitResponse("Narrow your filters. Max 10,000 rows."));
         }
         var assigneeNames = await taskRepository.GetExportAssigneeDisplayNamesAsync(filters, cancellationToken);
 
