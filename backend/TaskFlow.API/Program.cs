@@ -15,10 +15,13 @@ using Swashbuckle.AspNetCore.Filters;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using Serilog.Context;
+using Serilog.Events;
+using Serilog.Formatting.Json;
 using TaskFlow.API;
 using TaskFlow.API.Middleware;
 using TaskFlow.API.ExceptionHandling;
 using TaskFlow.Application;
+using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Auth;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure;
@@ -29,23 +32,32 @@ using TaskFlow.Infrastructure.Persistence;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using System.Threading.RateLimiting;
 
-Serilog.Log.Logger = new LoggerConfiguration()
+Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithThreadId()
+    .Enrich.WithEnvironmentName()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {CorrelationId} {Message:lj}{NewLine}{Exception}")
+    .WriteTo.File(
+        new JsonFormatter(),
+        "logs/taskflow-.json",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 30)
+    .CreateLogger();
 
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 10_485_760; // 10MB
 });
 
-builder.Host.UseSerilog((context, loggerConfiguration) =>
-{
-    loggerConfiguration
-        .ReadFrom.Configuration(context.Configuration)
-        .Enrich.FromLogContext();
-});
+builder.Host.UseSerilog();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -54,6 +66,8 @@ builder.Services.AddMemoryCache();
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
 builder.Services.AddMediatR(typeof(TaskFlow.Infrastructure.DependencyInjection).Assembly);
 
@@ -319,7 +333,36 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseSerilogRequestLogging();
+app.Use(async (ctx, next) =>
+{
+    var correlationId = ctx.Request.Headers["X-Correlation-ID"].FirstOrDefault();
+    correlationId = string.IsNullOrWhiteSpace(correlationId)
+        ? Guid.NewGuid().ToString("N")
+        : correlationId.Trim();
+    if (correlationId.Length > 64 || correlationId.Any(char.IsControl))
+    {
+        correlationId = Guid.NewGuid().ToString("N");
+    }
+
+    ctx.Items["CorrelationId"] = correlationId;
+    ctx.Response.Headers["X-Correlation-ID"] = correlationId;
+
+    using (LogContext.PushProperty("CorrelationId", correlationId))
+    {
+        await next();
+    }
+});
+app.UseSerilogRequestLogging(options =>
+{
+    options.EnrichDiagnosticContext = (diag, ctx) =>
+    {
+        diag.Set("UserId", ctx.User.FindFirst("sub")?.Value ?? "anon");
+        diag.Set("CorrelationId", ctx.Items["CorrelationId"]?.ToString() ?? string.Empty);
+    };
+    options.GetLevel = (ctx, _, ex) => ex is not null || ctx.Response.StatusCode >= 500
+        ? LogEventLevel.Error
+        : LogEventLevel.Information;
+});
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseExceptionHandler();
 // Avoid HTTP->HTTPS redirects in local dev: browser preflight (OPTIONS) requests
@@ -346,5 +389,5 @@ try
 }
 finally
 {
-    Serilog.Log.CloseAndFlush();
+    Log.CloseAndFlush();
 }

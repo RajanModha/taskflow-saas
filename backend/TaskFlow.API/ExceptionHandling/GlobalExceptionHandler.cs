@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Application.Common;
+using TaskFlow.Domain.Exceptions;
 
 namespace TaskFlow.API.ExceptionHandling;
 
@@ -13,20 +15,24 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
         Exception exception,
         CancellationToken cancellationToken)
     {
+        var correlationId = httpContext.Items["CorrelationId"]?.ToString();
+        var traceId = Activity.Current?.Id;
+
         if (exception is ValidationException validationException)
         {
             var errors = validationException.Errors
                 .GroupBy(e => e.PropertyName)
                 .ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).ToArray());
 
-            var validationProblem = new ProblemDetails
+            var validationProblem = new ValidationProblemDetails(errors)
             {
                 Title = "One or more validation errors occurred.",
                 Status = StatusCodes.Status400BadRequest,
                 Type = "https://httpstatuses.com/400",
-                Detail = environment.IsDevelopment() ? validationException.Message : null,
-                Extensions = { ["errors"] = errors },
+                Detail = validationException.Message,
             };
+            validationProblem.Extensions["correlationId"] = correlationId;
+            validationProblem.Extensions["traceId"] = traceId;
 
             logger.LogWarning(validationException, "Request validation failed");
             httpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -35,23 +41,32 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
             return true;
         }
 
-        var (status, title, type) = exception switch
+        var (status, title, detail, type) = exception switch
         {
             TenantContextMissingException => (
                 StatusCodes.Status401Unauthorized,
                 "Tenant context missing",
+                "Authenticated requests must include tenant context.",
                 "https://httpstatuses.com/401"),
+            AppException appException => (
+                appException.StatusCode,
+                "Request failed",
+                appException.Message,
+                $"https://httpstatuses.com/{appException.StatusCode}"),
             UnauthorizedAccessException => (
-                StatusCodes.Status403Forbidden,
-                "Forbidden",
-                "https://httpstatuses.com/403"),
-            InvalidOperationException => (
-                StatusCodes.Status500InternalServerError,
-                "Server error",
-                "https://httpstatuses.com/500"),
+                StatusCodes.Status401Unauthorized,
+                "Unauthorized",
+                "Unauthorized access.",
+                "https://httpstatuses.com/401"),
+            OperationCanceledException => (
+                499,
+                "Request canceled",
+                "The client closed the request before completion.",
+                "https://httpstatuses.com/499"),
             _ => (
                 StatusCodes.Status500InternalServerError,
                 "Server error",
+                environment.IsDevelopment() ? exception.Message : "An unexpected error occurred.",
                 "https://httpstatuses.com/500"),
         };
 
@@ -67,12 +82,12 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
         var problem = new ProblemDetails
         {
             Title = title,
-            Detail = environment.IsDevelopment()
-                ? exception.Message
-                : "An unexpected error occurred.",
+            Detail = detail,
             Status = status,
             Type = type,
         };
+        problem.Extensions["correlationId"] = correlationId;
+        problem.Extensions["traceId"] = traceId;
 
         httpContext.Response.StatusCode = problem.Status ?? StatusCodes.Status500InternalServerError;
         httpContext.Response.ContentType = "application/problem+json";
