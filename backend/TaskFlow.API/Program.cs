@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text;
 using Asp.Versioning;
+using Microsoft.AspNetCore.HttpOverrides;
 using Asp.Versioning.ApiExplorer;
 using MediatR;
 using FluentValidation.AspNetCore;
@@ -127,6 +128,20 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    if (builder.Environment.IsDevelopment())
+    {
+        // Docker / dev reverse proxies are often not in the default loopback-only proxy list.
+#pragma warning disable ASPDEPR005 // Clear legacy + current collections so forwarded headers work in dev (.NET 10).
+        options.KnownNetworks.Clear();
+#pragma warning restore ASPDEPR005
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    }
+});
+
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
@@ -169,6 +184,8 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
 
 await app.InitializeAsync();
 

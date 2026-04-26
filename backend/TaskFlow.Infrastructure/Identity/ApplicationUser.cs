@@ -18,11 +18,6 @@ public sealed class ApplicationUser : IdentityUser<Guid>
 
     public int VerificationResendCount { get; set; }
 
-    /// <summary>SHA-256 hex hash of the raw refresh token (UTF-8 bytes hashed).</summary>
-    public string? RefreshTokenHash { get; set; }
-
-    public DateTime? RefreshTokenExpiryUtc { get; set; }
-
     /// <summary>SHA-256 hex hash of the raw password-reset token (UTF-8 bytes hashed).</summary>
     public string? PasswordResetToken { get; set; }
 

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Auth;
@@ -14,7 +15,8 @@ public sealed class WorkspaceService(
     UserManager<ApplicationUser> userManager,
     TaskFlowDbContext dbContext,
     IUserSessionIssuer sessionIssuer,
-    TimeProvider timeProvider) : IWorkspaceService
+    TimeProvider timeProvider,
+    IHttpContextAccessor httpContextAccessor) : IWorkspaceService
 {
     public async Task<WorkspaceOutcome> CreateAsync(
         Guid userId,
@@ -49,7 +51,7 @@ public sealed class WorkspaceService(
         AuthResponse response;
         try
         {
-            response = await sessionIssuer.IssueSessionAsync(user, cancellationToken);
+            response = await sessionIssuer.IssueSessionAsync(user, GetConnectionInfo(), cancellationToken);
         }
         catch (InvalidOperationException)
         {
@@ -95,7 +97,7 @@ public sealed class WorkspaceService(
         AuthResponse response;
         try
         {
-            response = await sessionIssuer.IssueSessionAsync(user, cancellationToken);
+            response = await sessionIssuer.IssueSessionAsync(user, GetConnectionInfo(), cancellationToken);
         }
         catch (InvalidOperationException)
         {
@@ -106,6 +108,24 @@ public sealed class WorkspaceService(
         }
 
         return new WorkspaceSucceeded(response);
+    }
+
+    private SessionConnectionInfo? GetConnectionInfo()
+    {
+        var http = httpContextAccessor.HttpContext;
+        if (http is null)
+        {
+            return null;
+        }
+
+        var ua = http.Request.Headers.UserAgent.ToString();
+        if (string.IsNullOrWhiteSpace(ua))
+        {
+            ua = null;
+        }
+
+        var ip = http.Connection.RemoteIpAddress?.ToString();
+        return new SessionConnectionInfo(ua, ip);
     }
 
     private async Task<string> GenerateUniqueJoinCodeAsync(CancellationToken cancellationToken)

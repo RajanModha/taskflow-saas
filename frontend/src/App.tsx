@@ -8,11 +8,12 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 import { useAuth } from "./auth/AuthContext";
 
 export default function App() {
   const location = useLocation();
-  const { isAuthenticated, isLoading, logout } = useAuth();
+  const { user, isAuthenticated, isLoading, logout } = useAuth();
   const path = location.pathname;
 
   const showAppNav =
@@ -22,37 +23,72 @@ export default function App() {
     path.startsWith("/projects");
 
   const showLandingHeader = path === "/";
+  const initials = (user?.userName ?? user?.email ?? "U")
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("");
 
   return (
     <div className="shell">
       {showAppNav ? (
         <nav className="top-nav">
-          <Link to={isAuthenticated ? "/dashboard" : "/"} className="brand-link">
-            TaskFlow
-          </Link>
+          <div className="top-nav-left">
+            <Link to={isAuthenticated ? "/dashboard" : "/"} className="brand-link">
+              TaskFlow
+            </Link>
+          </div>
 
-          {isLoading ? (
-            <div className="skeleton h-8 w-28" />
-          ) : isAuthenticated ? (
-            <>
+          <div className="top-nav-center">
+            {isLoading ? (
+              <div className="skeleton h-8 w-40" />
+            ) : isAuthenticated ? (
+              <div className="top-nav-tabs">
+                <NavLink
+                  to="/dashboard"
+                  className={({ isActive }) => (isActive ? "top-tab active" : "top-tab")}
+                >
+                  Dashboard
+                </NavLink>
+                <NavLink
+                  to="/projects"
+                  className={({ isActive }) => (isActive ? "top-tab active" : "top-tab")}
+                >
+                  Projects
+                </NavLink>
+                <NavLink
+                  to="/workspaces/create"
+                  className={({ isActive }) => (isActive ? "top-tab active" : "top-tab")}
+                >
+                  Workspaces
+                </NavLink>
+              </div>
+            ) : (
               <NavLink
-                to="/dashboard"
+                to="/login"
                 className={({ isActive }) => (isActive ? "active" : undefined)}
               >
-                Dashboard
+                Log in
               </NavLink>
+            )}
+          </div>
+
+          <div className="top-nav-right">
+            {isLoading ? (
+              <div className="skeleton h-8 w-28" />
+            ) : isAuthenticated ? (
+              <>
+                <div className="user-chip" title={user?.email}>
+                  <span className="user-avatar">{initials || "U"}</span>
+                  <span className="user-email">{user?.email}</span>
+                </div>
               <button type="button" className="link-button" onClick={logout}>
                 Log out
               </button>
-            </>
-          ) : (
-            <NavLink
-              to="/login"
-              className={({ isActive }) => (isActive ? "active" : undefined)}
-            >
-              Log in
-            </NavLink>
-          )}
+              </>
+            ) : null}
+          </div>
         </nav>
       ) : null}
 
@@ -82,6 +118,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/workspaces/create" element={<CreateWorkspacePage />} />

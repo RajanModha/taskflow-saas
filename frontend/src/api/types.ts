@@ -2,6 +2,12 @@ export type AuthResponse = {
   accessToken: string;
   expiresAtUtc: string;
   tokenType: string;
+  refreshToken?: string | null;
+  refreshTokenExpiresAt?: string | null;
+};
+
+export type RegisterPendingResponse = {
+  message: string;
 };
 
 export type UserProfile = {

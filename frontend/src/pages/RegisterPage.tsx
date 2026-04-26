@@ -1,10 +1,9 @@
 import { type FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import type { NormalizedApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
 
 export function RegisterPage() {
-  const navigate = useNavigate();
   const { register } = useAuth();
   const [email, setEmail] = useState("");
   const [userName, setUserName] = useState("");
@@ -14,21 +13,23 @@ export function RegisterPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     setFieldErrors({});
+    setSuccessMessage(null);
     setSubmitting(true);
     try {
-      await register({
+      const { message } = await register({
         email: email.trim(),
         userName: userName.trim(),
         organizationName: organizationName.trim(),
         password,
         confirmPassword,
       });
-      navigate("/dashboard", { replace: true });
+      setSuccessMessage(message);
     } catch (err) {
       const api = err as NormalizedApiError;
       setFieldErrors(api.fieldErrors ?? {});
@@ -44,6 +45,16 @@ export function RegisterPage() {
       <p className="muted small">
         Already have an account? <Link to="/login">Log in</Link>
       </p>
+      {successMessage ? (
+        <div className="stack gap" style={{ marginBottom: "1rem" }}>
+          <div className="error-banner" style={{ borderColor: "#bbf7d0", background: "#f0fdf4", color: "#166534" }}>
+            {successMessage}
+          </div>
+          <p className="muted small">
+            After you verify your email, you can <Link to="/login">log in</Link>.
+          </p>
+        </div>
+      ) : null}
       <form className="stack gap" onSubmit={onSubmit}>
         <label className="field">
           <span>Email</span>
@@ -120,7 +131,7 @@ export function RegisterPage() {
           <div className="error-banner">{fieldErrors.general.join(" ")}</div>
         ) : null}
         {formError ? <div className="error-banner">{formError}</div> : null}
-        <button className="button primary" type="submit" disabled={submitting}>
+        <button className="button primary" type="submit" disabled={submitting || Boolean(successMessage)}>
           {submitting ? "Creating account…" : "Register"}
         </button>
       </form>

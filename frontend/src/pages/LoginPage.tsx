@@ -1,5 +1,6 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import * as authApi from "../api/authApi";
 import type { NormalizedApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
 
@@ -12,6 +13,9 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+  const [showResendHint, setShowResendHint] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
 
   const redirectTo = useMemo(() => {
     const state = location.state as { from?: string } | undefined;
@@ -22,6 +26,8 @@ export function LoginPage() {
     e.preventDefault();
     setFormError(null);
     setFieldErrors({});
+    setShowResendHint(false);
+    setResendMessage(null);
     setSubmitting(true);
     try {
       await login(email.trim(), password);
@@ -30,6 +36,7 @@ export function LoginPage() {
       const api = err as NormalizedApiError;
       setFieldErrors(api.fieldErrors ?? {});
       setFormError(api.detail ?? api.title ?? "Could not log in.");
+      setShowResendHint(api.status === 403);
     } finally {
       setSubmitting(false);
     }
@@ -72,6 +79,30 @@ export function LoginPage() {
           ) : null}
         </label>
         {formError ? <div className="error-banner">{formError}</div> : null}
+        {showResendHint ? (
+          <div className="muted small" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+            <button
+              type="button"
+              className="link-button"
+              disabled={resendBusy || !email.trim()}
+              onClick={async () => {
+                setResendBusy(true);
+                setResendMessage(null);
+                try {
+                  await authApi.resendVerificationEmail(email.trim());
+                  setResendMessage("If an account exists for this email, we sent a new verification link.");
+                } catch {
+                  setResendMessage("Could not send right now. Try again in a few minutes.");
+                } finally {
+                  setResendBusy(false);
+                }
+              }}
+            >
+              {resendBusy ? "Sending…" : "Resend verification email"}
+            </button>
+            {resendMessage ? <span>{resendMessage}</span> : null}
+          </div>
+        ) : null}
         <button className="button primary" type="submit" disabled={submitting}>
           {submitting ? "Signing in…" : "Sign in"}
         </button>

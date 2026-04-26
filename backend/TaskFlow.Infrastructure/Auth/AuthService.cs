@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using TaskFlow.Application.Auth;
 using TaskFlow.Domain.Common;
 using TaskFlow.Infrastructure.Email;
@@ -20,14 +21,17 @@ public sealed class AuthService(
     TimeProvider timeProvider,
     IEmailService emailService,
     IOptions<EmailSettings> emailSettings,
+    IOptions<JwtSettings> jwtSettings,
     IUserSessionIssuer sessionIssuer,
     IPasswordHasher<ApplicationUser> passwordHasher,
+    IHttpContextAccessor httpContextAccessor,
     ILogger<AuthService> logger) : IAuthService
 {
     private const string ForgotPasswordResponseMessage =
         "If that email is registered you'll receive a link shortly.";
 
     private readonly EmailSettings _emailSettings = emailSettings.Value;
+    private readonly JwtSettings _jwt = jwtSettings.Value;
 
     public async Task<RegisterOutcome> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
@@ -176,7 +180,7 @@ public sealed class AuthService(
         AuthResponse response;
         try
         {
-            response = await sessionIssuer.IssueSessionAsync(user, cancellationToken);
+            response = await sessionIssuer.IssueSessionAsync(user, GetSessionConnectionInfo(), cancellationToken);
         }
         catch (InvalidOperationException)
         {
@@ -272,7 +276,7 @@ public sealed class AuthService(
         AuthResponse response;
         try
         {
-            response = await sessionIssuer.IssueSessionAsync(user, cancellationToken);
+            response = await sessionIssuer.IssueSessionAsync(user, GetSessionConnectionInfo(), cancellationToken);
         }
         catch (InvalidOperationException)
         {
@@ -286,54 +290,201 @@ public sealed class AuthService(
         RefreshSessionRequest request,
         CancellationToken cancellationToken = default)
     {
+        const int maxAttempts = 3;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                return await RefreshSessionOnceAsync(request, cancellationToken);
+            }
+            catch (Exception ex) when (attempt < maxAttempts - 1 && IsPostgresTransientConcurrency(ex))
+            {
+                dbContext.ChangeTracker.Clear();
+                logger.LogWarning(
+                    ex,
+                    "Refresh token rotation hit retriable DB concurrency (attempt {Attempt} of {Max}).",
+                    attempt + 1,
+                    maxAttempts);
+            }
+        }
+
+        return new RefreshSessionFailed(
+            "Service temporarily unavailable",
+            "Could not refresh the session. Please try again.",
+            StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private async Task<RefreshSessionOutcome> RefreshSessionOnceAsync(
+        RefreshSessionRequest request,
+        CancellationToken cancellationToken)
+    {
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var raw = request.RefreshToken.Trim();
-        var hashHex = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
+        var hashHex = RefreshTokenCrypto.HashRaw(raw);
 
-        var user = await dbContext.Users
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(
-                u => u.RefreshTokenHash != null && u.RefreshTokenHash == hashHex,
-                cancellationToken);
-
-        if (user is null || !TokenHashesEqual(user.RefreshTokenHash, hashHex))
-        {
-            return new RefreshSessionFailed(
-                "Invalid refresh token",
-                "The refresh token is invalid or has been revoked.",
-                StatusCodes.Status401Unauthorized);
-        }
-
-        if (user.RefreshTokenExpiryUtc is null || user.RefreshTokenExpiryUtc <= now)
-        {
-            return new RefreshSessionFailed(
-                "Invalid refresh token",
-                "The refresh token is invalid or has been revoked.",
-                StatusCodes.Status401Unauthorized);
-        }
-
-        if (!user.EmailVerified || user.OrganizationId == Guid.Empty)
-        {
-            return new RefreshSessionFailed(
-                "Invalid refresh token",
-                "The refresh token is invalid or has been revoked.",
-                StatusCodes.Status401Unauthorized);
-        }
-
-        AuthResponse response;
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
         try
         {
-            response = await sessionIssuer.IssueSessionAsync(user, cancellationToken);
+            var stored = await dbContext.RefreshTokens
+                .FirstOrDefaultAsync(t => t.TokenHash == hashHex, cancellationToken);
+
+            if (stored is null || !TokenHashesEqual(stored.TokenHash, hashHex))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new RefreshSessionFailed(
+                    "Invalid refresh token",
+                    "The refresh token is invalid or has been revoked.",
+                    StatusCodes.Status401Unauthorized);
+            }
+
+            var user = await dbContext.Users
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(u => u.Id == stored.UserId, cancellationToken);
+            if (user is null || !user.EmailVerified || user.OrganizationId == Guid.Empty)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new RefreshSessionFailed(
+                    "Invalid refresh token",
+                    "The refresh token is invalid or has been revoked.",
+                    StatusCodes.Status401Unauthorized);
+            }
+
+            if (stored.RevokedAtUtc.HasValue)
+            {
+                await RevokeAllActiveRefreshTokensForUserAsync(user.Id, now, cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return new RefreshSessionReuseDetected();
+            }
+
+            if (stored.ExpiresAtUtc <= now)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new RefreshSessionFailed(
+                    "Invalid refresh token",
+                    "The refresh token is invalid or has been revoked.",
+                    StatusCodes.Status401Unauthorized);
+            }
+
+            var (rawNew, hashNew) = RefreshTokenCrypto.GenerateToken();
+            var refreshDays = _jwt.RefreshTokenDays <= 0 ? 30 : _jwt.RefreshTokenDays;
+            var newExpiryUtc = now.AddDays(refreshDays);
+
+            stored.RevokedAtUtc = now;
+            stored.ReplacedByTokenHash = hashNew;
+
+            AuthResponse response;
+            try
+            {
+                response = await sessionIssuer.AttachRefreshSessionAsync(
+                    user,
+                    rawNew,
+                    hashNew,
+                    newExpiryUtc,
+                    GetSessionConnectionInfo(),
+                    cancellationToken);
+            }
+            catch (InvalidOperationException)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new RefreshSessionFailed(
+                    "Invalid refresh token",
+                    "The refresh token is invalid or has been revoked.",
+                    StatusCodes.Status401Unauthorized);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return new RefreshSessionSucceeded(response);
         }
-        catch (InvalidOperationException)
+        catch
         {
-            return new RefreshSessionFailed(
-                "Invalid refresh token",
-                "The refresh token is invalid or has been revoked.",
-                StatusCodes.Status401Unauthorized);
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    private static bool IsPostgresTransientConcurrency(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is PostgresException pe && (pe.SqlState == "40001" || pe.SqlState == "40P01"))
+            {
+                return true;
+            }
         }
 
-        return new RefreshSessionSucceeded(response);
+        return false;
+    }
+
+    public async Task LogoutAsync(Guid userId, LogoutRequest request, CancellationToken cancellationToken = default)
+    {
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var hash = RefreshTokenCrypto.HashRaw(request.RefreshToken.Trim());
+        await dbContext.RefreshTokens
+            .Where(t => t.UserId == userId && t.TokenHash == hash && t.RevokedAtUtc == null)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(t => t.RevokedAtUtc, now),
+                cancellationToken);
+    }
+
+    public async Task LogoutAllAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        await RevokeAllActiveRefreshTokensForUserAsync(userId, now, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<UserSessionItemDto>> GetSessionsAsync(
+        Guid userId,
+        string? refreshTokenRawForCurrentMarker,
+        CancellationToken cancellationToken = default)
+    {
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        string? currentHash = null;
+        if (!string.IsNullOrWhiteSpace(refreshTokenRawForCurrentMarker))
+        {
+            currentHash = RefreshTokenCrypto.HashRaw(refreshTokenRawForCurrentMarker.Trim());
+        }
+
+        var rows = await dbContext.RefreshTokens
+            .AsNoTracking()
+            .Where(t => t.UserId == userId && t.RevokedAtUtc == null && t.ExpiresAtUtc > now)
+            .OrderByDescending(t => t.CreatedAtUtc)
+            .Select(t => new
+            {
+                t.Id,
+                t.DeviceInfo,
+                t.IpAddress,
+                t.CreatedAtUtc,
+                t.ExpiresAtUtc,
+                t.TokenHash,
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .Select(t => new UserSessionItemDto(
+                t.Id,
+                t.DeviceInfo,
+                t.IpAddress,
+                new DateTimeOffset(t.CreatedAtUtc, TimeSpan.Zero),
+                new DateTimeOffset(t.ExpiresAtUtc, TimeSpan.Zero),
+                currentHash is not null && TokenHashesEqual(t.TokenHash, currentHash)))
+            .ToList();
+    }
+
+    public async Task<bool> TryRevokeSessionAsync(
+        Guid userId,
+        Guid sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var affected = await dbContext.RefreshTokens
+            .Where(t => t.Id == sessionId && t.UserId == userId && t.RevokedAtUtc == null)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(t => t.RevokedAtUtc, now),
+                cancellationToken);
+        return affected > 0;
     }
 
     public async Task<ForgotPasswordResponse> ForgotPasswordAsync(
@@ -467,9 +618,9 @@ public sealed class AuthService(
         user.PasswordResetUsed = true;
         user.PasswordResetToken = null;
         user.PasswordResetTokenExpiry = null;
-        user.RefreshTokenHash = null;
-        user.RefreshTokenExpiryUtc = null;
         user.SecurityStamp = Guid.NewGuid().ToString();
+
+        await RevokeAllActiveRefreshTokensForUserAsync(user.Id, now, cancellationToken);
 
         var updateResult = await userManager.UpdateAsync(user);
         if (!updateResult.Succeeded)
@@ -520,6 +671,31 @@ public sealed class AuthService(
             organization?.Name ?? string.Empty,
             organization?.JoinCode ?? string.Empty);
     }
+
+    private SessionConnectionInfo? GetSessionConnectionInfo()
+    {
+        var http = httpContextAccessor.HttpContext;
+        if (http is null)
+        {
+            return null;
+        }
+
+        var ua = http.Request.Headers.UserAgent.ToString();
+        if (string.IsNullOrWhiteSpace(ua))
+        {
+            ua = null;
+        }
+
+        var ip = http.Connection.RemoteIpAddress?.ToString();
+        return new SessionConnectionInfo(ua, ip);
+    }
+
+    private Task RevokeAllActiveRefreshTokensForUserAsync(Guid userId, DateTime utcNow, CancellationToken cancellationToken) =>
+        dbContext.RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(t => t.RevokedAtUtc, utcNow),
+                cancellationToken);
 
     private async Task<IdentityResult> ValidatePasswordAgainstIdentityAsync(
         ApplicationUser user,

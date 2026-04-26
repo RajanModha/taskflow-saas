@@ -142,6 +142,36 @@ dotnet build backend/TaskFlow.slnx -c Release
 cd frontend; npm run build
 ```
 
+## Email Delivery (Resend)
+
+TaskFlow uses [Resend](https://resend.com) for transactional emails (free tier available).
+
+- NuGet package: `Resend`
+- Sender: `TaskFlow <onboarding@resend.dev>` (no custom domain required)
+- Config section:
+
+```json
+"Email": {
+  "ApiKey": "",
+  "FrontendBaseUrl": "http://localhost:5173"
+}
+```
+
+Set API key with user-secrets (recommended, do not commit):
+
+```powershell
+cd backend/TaskFlow.API
+dotnet user-secrets init
+dotnet user-secrets set "Email:ApiKey" "re_your_key_here"
+```
+
+Resend setup:
+1. Sign up at [resend.com](https://resend.com)
+2. Dashboard -> API Keys -> Create API Key
+3. Paste key via user-secrets command above
+4. Run API and trigger email flow
+
+
 ## Demo Credentials (Client Walkthrough)
 
 Use these accounts after seeding:

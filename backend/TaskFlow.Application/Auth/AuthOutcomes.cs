@@ -26,6 +26,8 @@ public sealed record RefreshSessionSucceeded(AuthResponse Response) : RefreshSes
 
 public sealed record RefreshSessionFailed(string Title, string Detail, int StatusCode) : RefreshSessionOutcome;
 
+public sealed record RefreshSessionReuseDetected : RefreshSessionOutcome;
+
 public abstract record ResetPasswordOutcome;
 
 public sealed record ResetPasswordSucceeded(string Message) : ResetPasswordOutcome;

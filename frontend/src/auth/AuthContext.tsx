@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import * as authApi from "../api/authApi";
-import type { UserProfile } from "../api/types";
+import type { AuthResponse, UserProfile } from "../api/types";
 import {
   clearStoredToken,
   getStoredToken,
@@ -31,7 +31,8 @@ type AuthContextValue = AuthState & {
     organizationName: string;
     password: string;
     confirmPassword: string;
-  }) => Promise<void>;
+  }) => Promise<{ message: string }>;
+  completeAuthSignIn: (auth: AuthResponse) => Promise<void>;
   createWorkspace: (name: string) => Promise<void>;
   joinWorkspace: (code: string) => Promise<void>;
   logout: () => void;
@@ -85,14 +86,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshProfile]);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const auth = await authApi.login(email, password);
-    setStoredSession({
-      accessToken: auth.accessToken,
-      expiresAtUtc: auth.expiresAtUtc,
-    });
-    await refreshProfile();
-  }, [refreshProfile]);
+  const completeAuthSignIn = useCallback(
+    async (auth: AuthResponse) => {
+      setStoredSession({
+        accessToken: auth.accessToken,
+        expiresAtUtc: auth.expiresAtUtc,
+        refreshToken: auth.refreshToken,
+        refreshTokenExpiresAt: auth.refreshTokenExpiresAt,
+      });
+      await refreshProfile();
+    },
+    [refreshProfile],
+  );
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const auth = await authApi.login(email, password);
+      await completeAuthSignIn(auth);
+    },
+    [completeAuthSignIn],
+  );
 
   const register = useCallback(
     async (input: {
@@ -102,38 +115,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string;
       confirmPassword: string;
     }) => {
-      const auth = await authApi.register(input);
-      setStoredSession({
-        accessToken: auth.accessToken,
-        expiresAtUtc: auth.expiresAtUtc,
-      });
-      await refreshProfile();
+      return authApi.register(input);
     },
-    [refreshProfile],
+    [],
   );
 
   const createWorkspace = useCallback(
     async (name: string) => {
       const auth = await workspacesApi.createWorkspace(name);
-      setStoredSession({
-        accessToken: auth.accessToken,
-        expiresAtUtc: auth.expiresAtUtc,
-      });
-      await refreshProfile();
+      await completeAuthSignIn(auth);
     },
-    [refreshProfile],
+    [completeAuthSignIn],
   );
 
   const joinWorkspace = useCallback(
     async (code: string) => {
       const auth = await workspacesApi.joinWorkspace(code);
-      setStoredSession({
-        accessToken: auth.accessToken,
-        expiresAtUtc: auth.expiresAtUtc,
-      });
-      await refreshProfile();
+      await completeAuthSignIn(auth);
     },
-    [refreshProfile],
+    [completeAuthSignIn],
   );
 
   const logout = useCallback(() => {
@@ -148,12 +148,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: Boolean(user),
       login,
       register,
+      completeAuthSignIn,
       createWorkspace,
       joinWorkspace,
       logout,
       refreshProfile,
     }),
-    [user, isLoading, login, register, createWorkspace, joinWorkspace, logout, refreshProfile],
+    [
+      user,
+      isLoading,
+      login,
+      register,
+      completeAuthSignIn,
+      createWorkspace,
+      joinWorkspace,
+      logout,
+      refreshProfile,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

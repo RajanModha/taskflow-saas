@@ -1,5 +1,5 @@
 import { http } from "./http";
-import type { AuthResponse, UserProfile } from "./types";
+import type { AuthResponse, RegisterPendingResponse, UserProfile } from "./types";
 
 export async function login(email: string, password: string) {
   const { data } = await http.post<AuthResponse>("/api/auth/login", {
@@ -16,8 +16,21 @@ export async function register(payload: {
   password: string;
   confirmPassword: string;
 }) {
-  const { data } = await http.post<AuthResponse>("/api/auth/register", payload);
+  const { data } = await http.post<RegisterPendingResponse>("/api/auth/register", payload);
   return data;
+}
+
+export async function verifyEmail(token: string, options?: { signal?: AbortSignal }) {
+  const { data } = await http.post<AuthResponse>(
+    "/api/auth/verify-email",
+    { token },
+    { signal: options?.signal },
+  );
+  return data;
+}
+
+export async function resendVerificationEmail(email: string) {
+  await http.post("/api/auth/resend-verification", { email });
 }
 
 export async function fetchMe() {

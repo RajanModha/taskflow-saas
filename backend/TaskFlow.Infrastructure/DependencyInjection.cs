@@ -56,6 +56,7 @@ public static class DependencyInjection
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IWorkspaceService, WorkspaceService>();
         services.AddSingleton<IAppInfo, AppInfoService>();
+        services.AddHostedService<RefreshTokenCleanupHostedService>();
         return services;
     }
 }

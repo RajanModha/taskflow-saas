@@ -14,6 +14,21 @@ public interface IAuthService
         RefreshSessionRequest request,
         CancellationToken cancellationToken = default);
 
+    Task LogoutAsync(Guid userId, LogoutRequest request, CancellationToken cancellationToken = default);
+
+    Task LogoutAllAsync(Guid userId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<UserSessionItemDto>> GetSessionsAsync(
+        Guid userId,
+        string? refreshTokenRawForCurrentMarker,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Returns false if the session id does not belong to the user.</summary>
+    Task<bool> TryRevokeSessionAsync(
+        Guid userId,
+        Guid sessionId,
+        CancellationToken cancellationToken = default);
+
     Task<ForgotPasswordResponse> ForgotPasswordAsync(
         ForgotPasswordRequest request,
         CancellationToken cancellationToken = default);

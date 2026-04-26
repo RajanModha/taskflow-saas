@@ -15,6 +15,8 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
     public DbSet<TaskFlow.Domain.Entities.Task> Tasks => Set<TaskFlow.Domain.Entities.Task>();
     public DbSet<SeedRun> SeedRuns => Set<SeedRun>();
 
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
     public TaskFlowDbContext(
         DbContextOptions<TaskFlowDbContext> options,
         ICurrentTenant currentTenant)
@@ -45,7 +47,6 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
             entity.Property(u => u.OrganizationId).IsRequired();
             entity.Property(u => u.EmailVerificationToken).HasMaxLength(64);
-            entity.Property(u => u.RefreshTokenHash).HasMaxLength(64);
             entity.Property(u => u.PasswordResetToken).HasMaxLength(64);
             entity.HasOne<Organization>()
                 .WithMany()
@@ -54,6 +55,23 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
             // Tenant isolation: all org-scoped entities should be filtered by org_id.
             entity.HasQueryFilter(u => _currentTenant.IsSet && u.OrganizationId == _currentTenant.OrganizationId);
+        });
+
+        builder.Entity<RefreshToken>(entity =>
+        {
+            entity.Property(t => t.TokenHash).HasMaxLength(64).IsRequired();
+            entity.Property(t => t.ReplacedByTokenHash).HasMaxLength(64);
+            entity.Property(t => t.DeviceInfo).HasMaxLength(1024);
+            entity.Property(t => t.IpAddress).HasMaxLength(64);
+            entity.Property(t => t.CreatedAtUtc).IsRequired();
+            entity.Property(t => t.ExpiresAtUtc).IsRequired();
+            entity.HasIndex(t => t.TokenHash);
+            entity.HasIndex(t => t.UserId);
+            entity
+                .HasOne(t => t.User)
+                .WithMany()
+                .HasForeignKey(t => t.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<Project>(entity =>

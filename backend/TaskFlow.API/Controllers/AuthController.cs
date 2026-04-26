@@ -104,6 +104,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     [HttpPost("refresh")]
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Refresh([FromBody] RefreshSessionRequest request, CancellationToken cancellationToken)
     {
         await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
@@ -112,9 +113,83 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         return outcome switch
         {
             RefreshSessionSucceeded s => Ok(s.Response),
+            RefreshSessionReuseDetected => Problem(
+                title: "Unauthorized",
+                detail: "Session invalidated due to suspicious activity. Please log in again.",
+                statusCode: StatusCodes.Status401Unauthorized),
             RefreshSessionFailed f => Problem(title: f.Title, detail: f.Detail, statusCode: f.StatusCode),
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
         };
+    }
+
+    /// <summary>Revoke the refresh token for this device/session.</summary>
+    [Authorize]
+    [HttpPost("logout")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Logout([FromBody] LogoutRequest request, CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        await authService.LogoutAsync(userId.Value, request, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>Revoke all refresh tokens for the current user.</summary>
+    [Authorize]
+    [HttpPost("logout-all")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> LogoutAll(CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        await authService.LogoutAllAsync(userId.Value, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>List active refresh-token sessions. Optional body <c>refreshToken</c> marks the current device (POST avoids logging secrets on GET).</summary>
+    [Authorize]
+    [HttpPost("sessions/query")]
+    [ProducesResponseType(typeof(IReadOnlyList<UserSessionItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> QuerySessions(
+        [FromBody] GetSessionsRequest? request,
+        CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var refresh = request?.RefreshToken;
+        var sessions = await authService.GetSessionsAsync(userId.Value, refresh, cancellationToken);
+        return Ok(sessions);
+    }
+
+    /// <summary>Revoke a specific session (refresh token row) by id.</summary>
+    [Authorize]
+    [HttpDelete("sessions/{sessionId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteSession(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var revoked = await authService.TryRevokeSessionAsync(userId.Value, sessionId, cancellationToken);
+        return revoked ? NoContent() : NotFound();
     }
 
     /// <summary>Authenticate and receive a JWT bearer token.</summary>
@@ -150,15 +225,21 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Me(CancellationToken cancellationToken)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)
-                     ?? User.FindFirstValue(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
-        if (!Guid.TryParse(userId, out var id))
+        var userId = TryGetUserId();
+        if (userId is null)
         {
             return Unauthorized();
         }
 
-        var profile = await authService.GetProfileAsync(id, cancellationToken);
+        var profile = await authService.GetProfileAsync(userId.Value, cancellationToken);
         return profile is null ? NotFound() : Ok(profile);
+    }
+
+    private Guid? TryGetUserId()
+    {
+        var userIdRaw = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                        ?? User.FindFirstValue(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
+        return Guid.TryParse(userIdRaw, out var id) ? id : null;
     }
 
     private ActionResult PasswordPolicyValidationProblem(IReadOnlyDictionary<string, string[]> errors)

@@ -1,18 +1,34 @@
 const ACCESS_TOKEN_KEY = "taskflow.accessToken";
 const EXPIRES_AT_KEY = "taskflow.expiresAtUtc";
+const REFRESH_TOKEN_KEY = "taskflow.refreshToken";
+const REFRESH_EXPIRES_AT_KEY = "taskflow.refreshTokenExpiresAt";
 
 export function getStoredToken(): string | null {
   return sessionStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
-export function setStoredSession(auth: { accessToken: string; expiresAtUtc: string }) {
+export function setStoredSession(auth: {
+  accessToken: string;
+  expiresAtUtc: string;
+  refreshToken?: string | null;
+  refreshTokenExpiresAt?: string | null;
+}) {
   sessionStorage.setItem(ACCESS_TOKEN_KEY, auth.accessToken);
   sessionStorage.setItem(EXPIRES_AT_KEY, auth.expiresAtUtc);
+  if (auth.refreshToken && auth.refreshTokenExpiresAt) {
+    sessionStorage.setItem(REFRESH_TOKEN_KEY, auth.refreshToken);
+    sessionStorage.setItem(REFRESH_EXPIRES_AT_KEY, auth.refreshTokenExpiresAt);
+  } else {
+    sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+    sessionStorage.removeItem(REFRESH_EXPIRES_AT_KEY);
+  }
 }
 
 export function clearStoredToken() {
   sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   sessionStorage.removeItem(EXPIRES_AT_KEY);
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+  sessionStorage.removeItem(REFRESH_EXPIRES_AT_KEY);
 }
 
 export function isTokenLikelyExpired(): boolean {
