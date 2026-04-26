@@ -51,6 +51,7 @@ dist/
 ~$*
 *~
 CodeCoverage/
+_buildverify/
 
 # MSBuild Binary and Structured Log
 *.binlog
