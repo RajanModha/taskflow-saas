@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using System.Linq.Expressions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Infrastructure.Identity;
@@ -101,12 +102,14 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.Property(p => p.Description).HasMaxLength(2000);
             entity.Property(p => p.CreatedAtUtc).IsRequired();
             entity.Property(p => p.UpdatedAtUtc).IsRequired();
+            entity.Property(p => p.IsDeleted).IsRequired().HasDefaultValue(false);
 
             entity.Property(p => p.OrganizationId).IsRequired();
 
             // Fail-closed tenant filter: no tenant context means no data returned.
             entity.HasQueryFilter(p => _currentTenant.IsSet && p.OrganizationId == _currentTenant.OrganizationId);
             entity.HasIndex(p => p.OrganizationId);
+            entity.HasIndex(p => p.IsDeleted);
             entity.HasIndex(p => new { p.Id, p.OrganizationId }).IsUnique();
         });
 
@@ -122,9 +125,11 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
             entity.Property(t => t.OrganizationId).IsRequired();
             entity.Property(t => t.ReminderSent).IsRequired().HasDefaultValue(false);
+            entity.Property(t => t.IsDeleted).IsRequired().HasDefaultValue(false);
 
             entity.HasQueryFilter(t => _currentTenant.IsSet && t.OrganizationId == _currentTenant.OrganizationId);
             entity.HasIndex(t => t.OrganizationId);
+            entity.HasIndex(t => t.IsDeleted);
             entity.HasIndex(t => new { t.OrganizationId, t.ProjectId });
             entity.HasIndex(t => new { t.OrganizationId, t.CreatedAtUtc });
             entity.HasIndex(t => new { t.OrganizationId, t.DueDateUtc });
@@ -304,6 +309,44 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.Property(s => s.AppliedAtUtc).IsRequired();
             entity.HasIndex(s => s.Key).IsUnique();
         });
+
+        foreach (var entityType in builder.Model.GetEntityTypes())
+        {
+            if (!typeof(ISoftDeletable).IsAssignableFrom(entityType.ClrType))
+            {
+                continue;
+            }
+
+            var parameter = Expression.Parameter(entityType.ClrType, "e");
+            var isDeletedProperty = Expression.Call(
+                typeof(EF),
+                nameof(EF.Property),
+                [typeof(bool)],
+                parameter,
+                Expression.Constant(nameof(ISoftDeletable.IsDeleted)));
+            var softDeleteFilter = Expression.Equal(isDeletedProperty, Expression.Constant(false));
+
+#pragma warning disable CS0618 // GetQueryFilter is still needed for combining existing model-level filter lambdas.
+            var existingFilter = entityType.GetQueryFilter();
+#pragma warning restore CS0618
+            Expression combinedBody = softDeleteFilter;
+            if (existingFilter is not null)
+            {
+                var replacedBody = new ReplaceParameterVisitor(existingFilter.Parameters[0], parameter)
+                    .Visit(existingFilter.Body)!;
+                combinedBody = Expression.AndAlso(replacedBody, softDeleteFilter);
+            }
+
+            builder.Entity(entityType.ClrType)
+                .HasQueryFilter(Expression.Lambda(combinedBody, parameter));
+        }
+    }
+
+    private sealed class ReplaceParameterVisitor(ParameterExpression source, ParameterExpression target)
+        : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) =>
+            node == source ? target : base.VisitParameter(node);
     }
 }
 

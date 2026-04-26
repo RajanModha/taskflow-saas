@@ -1,6 +1,6 @@
 namespace TaskFlow.Domain.Entities;
 
-public sealed class Project
+public sealed class Project : ISoftDeletable
 {
     public Guid Id { get; init; }
     public Guid OrganizationId { get; init; }
@@ -10,5 +10,7 @@ public sealed class Project
 
     public DateTime CreatedAtUtc { get; init; }
     public DateTime UpdatedAtUtc { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
 }
 

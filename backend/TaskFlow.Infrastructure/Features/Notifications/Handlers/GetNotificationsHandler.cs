@@ -18,7 +18,7 @@ public sealed class GetNotificationsHandler(
     {
         if (currentUser.UserId is not { } userId)
         {
-            return new PagedResultDto<NotificationDto>([], 1, 20, 0);
+            return PagedResultDto<NotificationDto>.Create([], 1, 20, 0);
         }
 
         var page = request.Page < 1 ? 1 : request.Page;
@@ -50,6 +50,6 @@ public sealed class GetNotificationsHandler(
                 n.EntityId))
             .ToListAsync(cancellationToken);
 
-        return new PagedResultDto<NotificationDto>(items, page, pageSize, total);
+        return PagedResultDto<NotificationDto>.Create(items, page, pageSize, total);
     }
 }

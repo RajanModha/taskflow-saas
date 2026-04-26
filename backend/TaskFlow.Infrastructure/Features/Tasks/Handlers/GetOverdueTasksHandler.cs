@@ -31,6 +31,6 @@ public sealed class GetOverdueTasksHandler(TaskFlowDbContext dbContext)
         var total = await query.LongCountAsync(cancellationToken);
         var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
         var mapped = await TaskProjection.ToDtosAsync(dbContext, items, cancellationToken);
-        return new PagedResultDto<TaskDto>(mapped, page, pageSize, total);
+        return PagedResultDto<TaskDto>.Create(mapped, page, pageSize, total);
     }
 }

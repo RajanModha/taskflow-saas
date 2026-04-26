@@ -31,7 +31,9 @@ public sealed class DeleteTaskHandler(
         var title = task.Title;
         var projectId = task.ProjectId;
         var assigneeId = task.AssigneeId;
-        dbContext.Tasks.Remove(task);
+        task.IsDeleted = true;
+        task.DeletedAt = DateTime.UtcNow;
+        task.UpdatedAtUtc = DateTime.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
 
         if (currentUser.UserId is { } actorId)

@@ -128,5 +128,17 @@ public sealed class ProjectsController(IMediator mediator) : ControllerBase
         var deleted = await mediator.Send(new DeleteProjectCommand(projectId), cancellationToken);
         return deleted ? NoContent() : NotFound();
     }
+
+    [HttpPost("{projectId:guid}/restore")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(ProjectDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ProjectDto>> Restore(
+        [FromRoute] Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        var restored = await mediator.Send(new RestoreProjectCommand(projectId), cancellationToken);
+        return restored is null ? NotFound() : Ok(restored);
+    }
 }
 

@@ -37,7 +37,7 @@ public sealed class GetProjectsHandler(
         var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
         var mapped = mapper.Map<List<ProjectDto>>(items);
 
-        return new PagedResultDto<ProjectDto>(mapped, page, pageSize, total);
+        return PagedResultDto<ProjectDto>.Create(mapped, page, pageSize, total);
     }
 }
 

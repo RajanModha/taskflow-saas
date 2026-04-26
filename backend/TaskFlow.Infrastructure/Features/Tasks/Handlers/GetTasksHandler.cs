@@ -19,6 +19,10 @@ public sealed class GetTasksHandler(
         var skip = (page - 1) * pageSize;
 
         var query = dbContext.Tasks.AsNoTracking().AsQueryable();
+        if (request.IncludeDeleted)
+        {
+            query = query.IgnoreQueryFilters();
+        }
 
         if (request.ProjectId.HasValue)
         {
@@ -99,6 +103,6 @@ public sealed class GetTasksHandler(
         var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
 
         var mapped = await TaskProjection.ToDtosAsync(dbContext, items, cancellationToken);
-        return new PagedResultDto<TaskDto>(mapped, page, pageSize, total);
+        return PagedResultDto<TaskDto>.Create(mapped, page, pageSize, total);
     }
 }

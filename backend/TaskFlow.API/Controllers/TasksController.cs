@@ -2,9 +2,11 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Asp.Versioning;
+using TaskFlow.Application.Auth;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Application.Workspaces;
 using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 using TaskPriority = TaskFlow.Domain.Entities.TaskPriority;
 
@@ -49,8 +51,14 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         [FromQuery] bool? assignedToMe = null,
         [FromQuery] Guid? assigneeId = null,
         [FromQuery] Guid? tagId = null,
+        [FromQuery] bool includeDeleted = false,
         CancellationToken cancellationToken = default)
     {
+        if (includeDeleted && !IsAdminPlus())
+        {
+            return Forbid();
+        }
+
         var sortDesc = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase);
 
         TaskStatus? statusEnum = null;
@@ -91,7 +99,8 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
                 sortDesc,
                 assignedToMe,
                 assigneeId,
-                tagId),
+                tagId,
+                includeDeleted),
             cancellationToken);
 
         return Ok(result);
@@ -383,5 +392,35 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
     {
         var deleted = await mediator.Send(new DeleteTaskCommand(taskId), cancellationToken);
         return deleted ? NoContent() : NotFound();
+    }
+
+    [HttpPost("{taskId:guid}/restore")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(TaskDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TaskDto>> Restore(
+        [FromRoute] Guid taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var restored = await mediator.Send(new RestoreTaskCommand(taskId), cancellationToken);
+        return restored is null ? NotFound() : Ok(restored);
+    }
+
+    [HttpDelete("{taskId:guid}/permanent")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> PermanentDelete(
+        [FromRoute] Guid taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var deleted = await mediator.Send(new PermanentDeleteTaskCommand(taskId), cancellationToken);
+        return deleted ? NoContent() : NotFound();
+    }
+
+    private bool IsAdminPlus()
+    {
+        var role = User.FindFirst(WorkspaceJwtClaims.Role)?.Value;
+        return role is WorkspaceRoleStrings.Owner or WorkspaceRoleStrings.Admin;
     }
 }

@@ -53,6 +53,6 @@ public sealed class GetTaskCommentsHandler(TaskFlowDbContext dbContext, ICurrent
             })
             .ToList();
 
-        return new PagedResultDto<CommentDto>(items, page, pageSize, total);
+        return PagedResultDto<CommentDto>.Create(items, page, pageSize, total);
     }
 }

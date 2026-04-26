@@ -45,6 +45,6 @@ public sealed class GetProjectActivityHandler(TaskFlowDbContext dbContext)
             .ToListAsync(cancellationToken);
 
         var items = rows.Select(ActivityLogMapper.ToDto).ToList();
-        return new PagedResultDto<ActivityLogDto>(items, page, pageSize, total);
+        return PagedResultDto<ActivityLogDto>.Create(items, page, pageSize, total);
     }
 }

@@ -17,7 +17,7 @@ public enum TaskPriority
     Urgent = 3,
 }
 
-public sealed class Task
+public sealed class Task : ISoftDeletable
 {
     public Guid Id { get; init; }
 
@@ -37,6 +37,8 @@ public sealed class Task
     public Guid? AssigneeId { get; set; }
 
     public bool ReminderSent { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
 
     // Navigation optional; EF can manage with FK if needed.
     public Project? Project { get; set; }

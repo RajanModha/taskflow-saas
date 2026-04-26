@@ -30,6 +30,7 @@ public sealed class DeleteProjectHandler(
         var orgId = project.OrganizationId;
         var projectId = project.Id;
         var name = project.Name;
+        var now = DateTime.UtcNow;
 
         if (currentUser.UserId is { } actorId)
         {
@@ -48,8 +49,21 @@ public sealed class DeleteProjectHandler(
                 cancellationToken);
         }
 
+        project.IsDeleted = true;
+        project.DeletedAt = now;
+        project.UpdatedAtUtc = now;
+
+        var projectTasks = await dbContext.Tasks
+            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
+            .ToListAsync(cancellationToken);
+        foreach (var task in projectTasks)
+        {
+            task.IsDeleted = true;
+            task.DeletedAt = now;
+            task.UpdatedAtUtc = now;
+        }
+
         boardCacheVersion.RemoveProject(project.Id);
-        dbContext.Projects.Remove(project);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         DashboardCacheInvalidation.InvalidateOrganizationStats(cache, orgId);

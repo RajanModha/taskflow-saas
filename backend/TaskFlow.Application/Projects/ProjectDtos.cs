@@ -19,6 +19,7 @@ public sealed record UpdateProjectCommand(
     string? Description) : IRequest<ProjectDto?>;
 
 public sealed record DeleteProjectCommand(Guid ProjectId) : IRequest<bool>;
+public sealed record RestoreProjectCommand(Guid ProjectId) : IRequest<ProjectDto?>;
 
 public sealed record GetProjectsQuery(
     int Page,

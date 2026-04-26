@@ -20,7 +20,9 @@ public sealed record TaskDto(
     IReadOnlyList<TagDto> Tags,
     int ChecklistTotal,
     int ChecklistCompleted,
-    decimal ChecklistProgress);
+    decimal ChecklistProgress,
+    bool IsDeleted,
+    DateTime? DeletedAt);
 
 public sealed record ChecklistItemDto(
     Guid Id,
@@ -60,6 +62,8 @@ public sealed record UpdateTaskCommand(
     Guid[]? TagIds) : IRequest<TaskDto?>;
 
 public sealed record DeleteTaskCommand(Guid TaskId) : IRequest<bool>;
+public sealed record RestoreTaskCommand(Guid TaskId) : IRequest<TaskDto?>;
+public sealed record PermanentDeleteTaskCommand(Guid TaskId) : IRequest<bool>;
 
 public sealed record GetTasksQuery(
     int Page,
@@ -74,7 +78,8 @@ public sealed record GetTasksQuery(
     bool SortDesc,
     bool? AssignedToMe,
     Guid? AssigneeId,
-    Guid? TagId) : IRequest<PagedResultDto<TaskDto>>;
+    Guid? TagId,
+    bool IncludeDeleted) : IRequest<PagedResultDto<TaskDto>>;
 
 public sealed record AssignTaskCommand(Guid TaskId, Guid? AssigneeId) : IRequest<TaskDto?>;
 
