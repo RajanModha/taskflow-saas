@@ -22,7 +22,8 @@ public sealed record TaskDto(
     int ChecklistCompleted,
     decimal ChecklistProgress,
     bool IsDeleted,
-    DateTime? DeletedAt);
+    DateTime? DeletedAt,
+    uint RowVersion);
 
 public sealed record ChecklistItemDto(
     Guid Id,
@@ -64,6 +65,37 @@ public sealed record UpdateTaskCommand(
 public sealed record DeleteTaskCommand(Guid TaskId) : IRequest<bool>;
 public sealed record RestoreTaskCommand(Guid TaskId) : IRequest<TaskDto?>;
 public sealed record PermanentDeleteTaskCommand(Guid TaskId) : IRequest<bool>;
+public sealed record PatchTaskCommand(
+    Guid TaskId,
+    string? Title,
+    bool HasTitle,
+    string? Description,
+    bool HasDescription,
+    DomainTaskStatus? Status,
+    bool HasStatus,
+    DomainTaskPriority? Priority,
+    bool HasPriority,
+    DateTime? DueDateUtc,
+    bool HasDueDateUtc,
+    Guid? AssigneeId,
+    bool HasAssigneeId) : IRequest<TaskDto?>;
+
+public sealed record BulkTaskUpdateFields(
+    DomainTaskStatus? Status,
+    DomainTaskPriority? Priority,
+    DateTime? DueDateUtc,
+    Guid? AssigneeId,
+    bool HasDueDateUtc,
+    bool HasAssigneeId);
+
+public sealed record BulkTaskFailureDto(Guid TaskId, string Reason);
+public sealed record BulkTaskOperationResultDto(int Succeeded, IReadOnlyList<BulkTaskFailureDto> Failed);
+public sealed record BulkTaskDeleteResultDto(int Deleted, IReadOnlyList<Guid> NotFound);
+
+public sealed record BulkUpdateTasksCommand(Guid[] TaskIds, BulkTaskUpdateFields Updates)
+    : IRequest<BulkTaskOperationResultDto>;
+public sealed record BulkDeleteTasksCommand(Guid[] TaskIds) : IRequest<BulkTaskDeleteResultDto>;
+public sealed record BulkAssignTasksCommand(Guid[] TaskIds, Guid? AssigneeId) : IRequest<BulkTaskOperationResultDto>;
 
 public sealed record GetTasksQuery(
     int Page,

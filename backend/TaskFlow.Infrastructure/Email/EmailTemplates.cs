@@ -103,5 +103,18 @@ public static class EmailTemplates
            padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:500;
            margin:4px 0;">View task</a>
         """);
+
+    public static string BulkTaskAssignedSummary(
+        string userName,
+        int count,
+        string workspaceName,
+        string tasksUrl) => Base($"""
+        <h2 style="color:#18181b;margin:0 0 8px;">You have new task assignments</h2>
+        <p style="color:#52525b;line-height:1.6;">Hi {userName}, you have been assigned
+        <strong>{count}</strong> tasks in <strong>{workspaceName}</strong>.</p>
+        <a href="{tasksUrl}" style="display:inline-block;background:#18181b;color:#fff;
+           padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:500;
+           margin:24px 0;">View tasks</a>
+        """);
 }
 

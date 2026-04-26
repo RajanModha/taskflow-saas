@@ -126,6 +126,11 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.Property(t => t.OrganizationId).IsRequired();
             entity.Property(t => t.ReminderSent).IsRequired().HasDefaultValue(false);
             entity.Property(t => t.IsDeleted).IsRequired().HasDefaultValue(false);
+            entity.Property(t => t.RowVersion)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
 
             entity.HasQueryFilter(t => _currentTenant.IsSet && t.OrganizationId == _currentTenant.OrganizationId);
             entity.HasIndex(t => t.OrganizationId);

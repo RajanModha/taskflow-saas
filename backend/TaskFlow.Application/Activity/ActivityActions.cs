@@ -19,6 +19,7 @@ public static class ActivityActions
     public const string TaskDeleted = "task.deleted";
 
     public const string TaskRestored = "task.restored";
+    public const string TaskBulkUpdated = "task.bulk_updated";
 
     public const string TaskTagAdded = "task.tag_added";
 

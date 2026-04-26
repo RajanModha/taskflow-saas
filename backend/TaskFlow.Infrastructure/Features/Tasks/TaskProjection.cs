@@ -43,7 +43,8 @@ internal static class TaskProjection
             checklistCompleted,
             checklistProgress,
             task.IsDeleted,
-            task.DeletedAt);
+            task.DeletedAt,
+            task.RowVersion);
 
     public static async Task<List<TaskDto>> ToDtosAsync(
         TaskFlowDbContext dbContext,

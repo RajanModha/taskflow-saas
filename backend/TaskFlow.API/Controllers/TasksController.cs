@@ -1,7 +1,9 @@
 using MediatR;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Asp.Versioning;
+using Microsoft.AspNetCore.RateLimiting;
 using TaskFlow.Application.Auth;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
@@ -34,6 +36,8 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
     public sealed record UpdateChecklistItemRequest(string? Title, bool? IsCompleted);
 
     public sealed record ReorderChecklistRequest(Guid[] OrderedIds);
+    public sealed record BulkDeleteRequest(Guid[] TaskIds);
+    public sealed record BulkAssignRequest(Guid[] TaskIds, Guid? AssigneeId);
 
     [HttpGet]
     [ProducesResponseType(typeof(PagedResultDto<TaskDto>), StatusCodes.Status200OK)]
@@ -363,6 +367,87 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         return Ok(updated);
     }
 
+    [HttpPatch("{taskId:guid}")]
+    [ProducesResponseType(typeof(TaskDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<TaskDto>> Patch(
+        [FromRoute] Guid taskId,
+        [FromBody] JsonElement body,
+        CancellationToken cancellationToken = default)
+    {
+        var hasTitle = body.TryGetProperty("title", out var titleProp);
+        var hasDescription = body.TryGetProperty("description", out var descriptionProp);
+        var hasStatus = body.TryGetProperty("status", out var statusProp);
+        var hasPriority = body.TryGetProperty("priority", out var priorityProp);
+        var hasDueDateUtc = body.TryGetProperty("dueDateUtc", out var dueDateProp);
+        var hasAssigneeId = body.TryGetProperty("assigneeId", out var assigneeProp);
+
+        if (!(hasTitle || hasDescription || hasStatus || hasPriority || hasDueDateUtc || hasAssigneeId))
+        {
+            ModelState.AddModelError("body", "At least one patch field is required.");
+            return ValidationProblem(ModelState);
+        }
+
+        string? title = hasTitle && titleProp.ValueKind != JsonValueKind.Null ? titleProp.GetString() : null;
+        string? description = hasDescription && descriptionProp.ValueKind != JsonValueKind.Null ? descriptionProp.GetString() : null;
+        DateTime? dueDateUtc = hasDueDateUtc && dueDateProp.ValueKind != JsonValueKind.Null ? dueDateProp.GetDateTime() : null;
+        Guid? assigneeId = hasAssigneeId && assigneeProp.ValueKind != JsonValueKind.Null ? assigneeProp.GetGuid() : null;
+
+        TaskStatus? status = null;
+        if (hasStatus && statusProp.ValueKind != JsonValueKind.Null)
+        {
+            if (statusProp.ValueKind == JsonValueKind.String)
+            {
+                if (!Enum.TryParse<TaskStatus>(statusProp.GetString(), true, out var parsed))
+                {
+                    ModelState.AddModelError("status", "Invalid status.");
+                    return ValidationProblem(ModelState);
+                }
+                status = parsed;
+            }
+            else
+            {
+                status = (TaskStatus)statusProp.GetInt32();
+            }
+        }
+
+        TaskPriority? priority = null;
+        if (hasPriority && priorityProp.ValueKind != JsonValueKind.Null)
+        {
+            if (priorityProp.ValueKind == JsonValueKind.String)
+            {
+                if (!Enum.TryParse<TaskPriority>(priorityProp.GetString(), true, out var parsed))
+                {
+                    ModelState.AddModelError("priority", "Invalid priority.");
+                    return ValidationProblem(ModelState);
+                }
+                priority = parsed;
+            }
+            else
+            {
+                priority = (TaskPriority)priorityProp.GetInt32();
+            }
+        }
+
+        var command = new PatchTaskCommand(
+            taskId,
+            title,
+            hasTitle,
+            description,
+            hasDescription,
+            status,
+            hasStatus,
+            priority,
+            hasPriority,
+            dueDateUtc,
+            hasDueDateUtc,
+            assigneeId,
+            hasAssigneeId);
+        var result = await mediator.Send(command, cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
     [HttpPut("{taskId:guid}/assign")]
     [ProducesResponseType(typeof(TaskDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -394,6 +479,165 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         return deleted ? NoContent() : NotFound();
     }
 
+    [HttpPost("bulk-update")]
+    [EnableRateLimiting("api")]
+    [ProducesResponseType(typeof(BulkTaskOperationResultDto), StatusCodes.Status207MultiStatus)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<BulkTaskOperationResultDto>> BulkUpdate(
+        [FromBody] JsonElement body,
+        CancellationToken cancellationToken = default)
+    {
+        if (!body.TryGetProperty("taskIds", out var taskIdsProp) || taskIdsProp.ValueKind != JsonValueKind.Array)
+        {
+            ModelState.AddModelError("taskIds", "taskIds is required.");
+            return ValidationProblem(ModelState);
+        }
+        var taskIds = new List<Guid>();
+        foreach (var element in taskIdsProp.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.String || !Guid.TryParse(element.GetString(), out var id))
+            {
+                ModelState.AddModelError("taskIds", "All taskIds must be valid GUID strings.");
+                return ValidationProblem(ModelState);
+            }
+
+            taskIds.Add(id);
+        }
+        if (taskIds.Count > 100)
+        {
+            ModelState.AddModelError("taskIds", "No more than 100 task ids are allowed.");
+            return ValidationProblem(ModelState);
+        }
+
+        if (!body.TryGetProperty("updates", out var updatesProp) || updatesProp.ValueKind != JsonValueKind.Object)
+        {
+            ModelState.AddModelError("updates", "updates is required.");
+            return ValidationProblem(ModelState);
+        }
+        var hasDueDateUtc = updatesProp.TryGetProperty("dueDateUtc", out var dueDateProp);
+        var hasAssigneeId = updatesProp.TryGetProperty("assigneeId", out var assigneeProp);
+        var hasStatus = updatesProp.TryGetProperty("status", out var statusProp);
+        var hasPriority = updatesProp.TryGetProperty("priority", out var priorityProp);
+
+        TaskStatus? status = null;
+        if (hasStatus && statusProp.ValueKind != JsonValueKind.Null)
+        {
+            if (statusProp.ValueKind == JsonValueKind.String)
+            {
+                if (!Enum.TryParse<TaskStatus>(statusProp.GetString(), true, out var parsed))
+                {
+                    ModelState.AddModelError("updates.status", "Invalid status.");
+                    return ValidationProblem(ModelState);
+                }
+                status = parsed;
+            }
+            else if (statusProp.ValueKind == JsonValueKind.Number && statusProp.TryGetInt32(out var numericStatus))
+            {
+                status = (TaskStatus)numericStatus;
+            }
+            else
+            {
+                ModelState.AddModelError("updates.status", "Invalid status.");
+                return ValidationProblem(ModelState);
+            }
+        }
+
+        TaskPriority? priority = null;
+        if (hasPriority && priorityProp.ValueKind != JsonValueKind.Null)
+        {
+            if (priorityProp.ValueKind == JsonValueKind.String)
+            {
+                if (!Enum.TryParse<TaskPriority>(priorityProp.GetString(), true, out var parsed))
+                {
+                    ModelState.AddModelError("updates.priority", "Invalid priority.");
+                    return ValidationProblem(ModelState);
+                }
+                priority = parsed;
+            }
+            else if (priorityProp.ValueKind == JsonValueKind.Number && priorityProp.TryGetInt32(out var numericPriority))
+            {
+                priority = (TaskPriority)numericPriority;
+            }
+            else
+            {
+                ModelState.AddModelError("updates.priority", "Invalid priority.");
+                return ValidationProblem(ModelState);
+            }
+        }
+
+        DateTime? dueDateUtc = null;
+        if (hasDueDateUtc && dueDateProp.ValueKind != JsonValueKind.Null)
+        {
+            if (dueDateProp.ValueKind != JsonValueKind.String || !dueDateProp.TryGetDateTime(out var parsedDueDate))
+            {
+                ModelState.AddModelError("updates.dueDateUtc", "dueDateUtc must be a valid ISO-8601 date/time string or null.");
+                return ValidationProblem(ModelState);
+            }
+
+            dueDateUtc = parsedDueDate;
+        }
+
+        Guid? assigneeId = null;
+        if (hasAssigneeId && assigneeProp.ValueKind != JsonValueKind.Null)
+        {
+            if (assigneeProp.ValueKind != JsonValueKind.String || !Guid.TryParse(assigneeProp.GetString(), out var parsedAssigneeId))
+            {
+                ModelState.AddModelError("updates.assigneeId", "assigneeId must be a valid GUID string or null.");
+                return ValidationProblem(ModelState);
+            }
+
+            assigneeId = parsedAssigneeId;
+        }
+
+        var command = new BulkUpdateTasksCommand(
+            [.. taskIds],
+            new BulkTaskUpdateFields(
+                status,
+                priority,
+                dueDateUtc,
+                assigneeId,
+                hasDueDateUtc,
+                hasAssigneeId));
+        var result = await mediator.Send(command, cancellationToken);
+        return StatusCode(StatusCodes.Status207MultiStatus, result);
+    }
+
+    [HttpPost("bulk-delete")]
+    [EnableRateLimiting("api")]
+    [ProducesResponseType(typeof(BulkTaskDeleteResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<BulkTaskDeleteResultDto>> BulkDelete(
+        [FromBody] BulkDeleteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.TaskIds.Length > 100)
+        {
+            ModelState.AddModelError(nameof(request.TaskIds), "No more than 100 task ids are allowed.");
+            return ValidationProblem(ModelState);
+        }
+
+        var result = await mediator.Send(new BulkDeleteTasksCommand(request.TaskIds), cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("bulk-assign")]
+    [EnableRateLimiting("api")]
+    [ProducesResponseType(typeof(BulkTaskOperationResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<BulkTaskOperationResultDto>> BulkAssign(
+        [FromBody] BulkAssignRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.TaskIds.Length > 100)
+        {
+            ModelState.AddModelError(nameof(request.TaskIds), "No more than 100 task ids are allowed.");
+            return ValidationProblem(ModelState);
+        }
+
+        var result = await mediator.Send(new BulkAssignTasksCommand(request.TaskIds, request.AssigneeId), cancellationToken);
+        return Ok(result);
+    }
+
     [HttpPost("{taskId:guid}/restore")]
     [Authorize(Policy = "AdminPolicy")]
     [ProducesResponseType(typeof(TaskDto), StatusCodes.Status200OK)]
@@ -423,4 +667,5 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         var role = User.FindFirst(WorkspaceJwtClaims.Role)?.Value;
         return role is WorkspaceRoleStrings.Owner or WorkspaceRoleStrings.Admin;
     }
+
 }

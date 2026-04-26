@@ -39,6 +39,7 @@ public sealed class Task : ISoftDeletable
     public bool ReminderSent { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
+    public uint RowVersion { get; set; }
 
     // Navigation optional; EF can manage with FK if needed.
     public Project? Project { get; set; }
