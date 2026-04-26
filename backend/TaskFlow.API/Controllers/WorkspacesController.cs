@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Application.Auth;
+using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Domain.Entities;
@@ -17,7 +18,8 @@ namespace TaskFlow.API.Controllers;
 public sealed class WorkspacesController(
     IWorkspaceService workspaceService,
     IWorkspaceManagementService workspaceManagement,
-    IWorkspaceTagService workspaceTagService) : ControllerBase
+    IWorkspaceTagService workspaceTagService,
+    IWorkspaceWebhookService workspaceWebhookService) : ControllerBase
 {
     [HttpGet("me")]
     [ProducesResponseType(typeof(MyWorkspaceResponse), StatusCodes.Status200OK)]
@@ -332,6 +334,124 @@ public sealed class WorkspacesController(
             WorkspaceFailed f => ValidationWorkspaceErrors(f.Errors),
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
         };
+    }
+
+    [HttpGet("webhooks")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(IReadOnlyList<WebhookDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ListWebhooks(CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await workspaceWebhookService.ListWebhooksAsync(userId.Value, cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost("webhooks")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(WebhookDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateWebhook(
+        [FromBody] CreateWorkspaceWebhookRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var (status, body) = await workspaceWebhookService.CreateWebhookAsync(userId.Value, request, cancellationToken);
+        return status == StatusCodes.Status201Created
+            ? CreatedAtAction(nameof(ListWebhooks), null, body)
+            : StatusCode(status, body);
+    }
+
+    [HttpPut("webhooks/{webhookId:guid}")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(WebhookDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateWebhook(
+        Guid webhookId,
+        [FromBody] UpdateWorkspaceWebhookRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var (status, body) = await workspaceWebhookService.UpdateWebhookAsync(
+            userId.Value,
+            webhookId,
+            request,
+            cancellationToken);
+        return StatusCode(status, body);
+    }
+
+    [HttpDelete("webhooks/{webhookId:guid}")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteWebhook(Guid webhookId, CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var status = await workspaceWebhookService.DeleteWebhookAsync(userId.Value, webhookId, cancellationToken);
+        return status == StatusCodes.Status204NoContent ? NoContent() : NotFound();
+    }
+
+    [HttpGet("webhooks/{webhookId:guid}/deliveries")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(PagedResultDto<WebhookDeliveryLogDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetWebhookDeliveries(
+        Guid webhookId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var result = await workspaceWebhookService.GetDeliveriesPageAsync(
+            userId.Value,
+            webhookId,
+            page,
+            pageSize,
+            cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost("webhooks/{webhookId:guid}/test")]
+    [Authorize(Policy = "AdminPolicy")]
+    [ProducesResponseType(typeof(WebhookTestResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> TestWebhook(Guid webhookId, CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var (status, body) = await workspaceWebhookService.TestWebhookAsync(userId.Value, webhookId, cancellationToken);
+        return StatusCode(status, body);
     }
 
     [HttpPost("join")]

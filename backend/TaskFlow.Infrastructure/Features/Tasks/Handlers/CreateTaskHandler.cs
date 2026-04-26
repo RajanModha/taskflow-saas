@@ -4,6 +4,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Workspaces;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Notifications;
 using TaskFlow.Infrastructure.Features.Dashboard;
@@ -25,7 +26,8 @@ public sealed class CreateTaskHandler(
     INotificationService notificationService,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
-    IActivityLogger activityLogger) : IRequestHandler<CreateTaskCommand, TaskDto?>
+    IActivityLogger activityLogger,
+    IWebhookDispatcher webhookDispatcher) : IRequestHandler<CreateTaskCommand, TaskDto?>
 {
     public async System.Threading.Tasks.Task<TaskDto?> Handle(CreateTaskCommand request, CancellationToken cancellationToken)
     {
@@ -139,6 +141,12 @@ public sealed class CreateTaskHandler(
                 new { projectId = task.ProjectId, title = task.Title },
                 cancellationToken);
         }
+
+        await webhookDispatcher.DispatchOrganizationEventAsync(
+            currentTenant.OrganizationId,
+            WebhookEventTypes.TaskCreated,
+            new { taskId = task.Id, projectId = task.ProjectId, title = task.Title },
+            cancellationToken);
 
         var dtoList = await TaskProjection.ToDtosAsync(dbContext, [task], cancellationToken);
         return dtoList[0];

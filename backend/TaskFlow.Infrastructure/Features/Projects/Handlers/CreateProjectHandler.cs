@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Workspaces;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Projects;
 using TaskFlow.Application.Tenancy;
@@ -18,7 +19,8 @@ public sealed class CreateProjectHandler(
     ICurrentUser currentUser,
     IMapper mapper,
     IActivityLogger activityLogger,
-    IMemoryCache cache)
+    IMemoryCache cache,
+    IWebhookDispatcher webhookDispatcher)
     : IRequestHandler<CreateProjectCommand, ProjectDto>
 {
     public async Task<ProjectDto> Handle(CreateProjectCommand request, CancellationToken cancellationToken)
@@ -62,6 +64,12 @@ public sealed class CreateProjectHandler(
                 new { name = project.Name },
                 cancellationToken);
         }
+
+        await webhookDispatcher.DispatchOrganizationEventAsync(
+            currentTenant.OrganizationId,
+            WebhookEventTypes.ProjectCreated,
+            new { projectId = project.Id, name = project.Name },
+            cancellationToken);
 
         return mapper.Map<ProjectDto>(project);
     }

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -17,6 +18,7 @@ using TaskFlow.Infrastructure.Notifications;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Infrastructure.Services;
+using TaskFlow.Infrastructure.Webhooks;
 using TaskFlow.Infrastructure.Workspaces;
 
 namespace TaskFlow.Infrastructure;
@@ -70,8 +72,14 @@ public static class DependencyInjection
         services.AddScoped<IWorkspaceTagService, WorkspaceTagService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddSingleton<IAppInfo, AppInfoService>();
+        services.AddDataProtection();
+        services.AddSingleton<WebhookSecretProtector>();
+        services.AddHttpClient("Webhooks", client => client.Timeout = TimeSpan.FromSeconds(10));
+        services.AddScoped<IWebhookDispatcher, WebhookDispatcher>();
+        services.AddScoped<IWorkspaceWebhookService, WorkspaceWebhookService>();
         services.AddHostedService<RefreshTokenCleanupHostedService>();
         services.AddHostedService<NotificationCleanupHostedService>();
+        services.AddHostedService<WebhookRetryHostedService>();
         return services;
     }
 }

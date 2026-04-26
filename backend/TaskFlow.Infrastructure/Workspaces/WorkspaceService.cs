@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Auth;
 using TaskFlow.Application.Notifications;
 using TaskFlow.Application.Workspaces;
@@ -18,7 +19,8 @@ public sealed class WorkspaceService(
     IUserSessionIssuer sessionIssuer,
     TimeProvider timeProvider,
     IHttpContextAccessor httpContextAccessor,
-    INotificationService notificationService) : IWorkspaceService
+    INotificationService notificationService,
+    IWebhookDispatcher webhookDispatcher) : IWorkspaceService
 {
     public async Task<WorkspaceOutcome> CreateAsync(
         Guid userId,
@@ -128,6 +130,17 @@ public sealed class WorkspaceService(
                 entityId: organization.Id,
                 ct: cancellationToken);
         }
+
+        await webhookDispatcher.DispatchOrganizationEventAsync(
+            organization.Id,
+            WebhookEventTypes.MemberJoined,
+            new
+            {
+                userId = user.Id,
+                displayName = user.DisplayName,
+                userName = user.UserName,
+            },
+            cancellationToken);
 
         AuthResponse response;
         try

@@ -37,6 +37,10 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
     public DbSet<PendingInvite> PendingInvites => Set<PendingInvite>();
 
+    public DbSet<Webhook> Webhooks => Set<Webhook>();
+
+    public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
+
     public TaskFlowDbContext(
         DbContextOptions<TaskFlowDbContext> options,
         ICurrentTenant currentTenant)
@@ -354,6 +358,46 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
                 .WithMany()
                 .HasForeignKey(i => i.OrganizationId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<Webhook>(entity =>
+        {
+            entity.Property(w => w.Url).HasMaxLength(2048).IsRequired();
+            entity.Property(w => w.Secret).HasMaxLength(512).IsRequired();
+            entity.Property(w => w.Events).HasMaxLength(4000).IsRequired();
+            entity.Property(w => w.CreatedAtUtc).IsRequired();
+            entity.Property(w => w.IsActive).IsRequired();
+
+            entity.HasIndex(w => w.OrganizationId);
+
+            entity
+                .HasOne(w => w.Organization)
+                .WithMany()
+                .HasForeignKey(w => w.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(w => _currentTenant.IsSet && w.OrganizationId == _currentTenant.OrganizationId);
+        });
+
+        builder.Entity<WebhookDelivery>(entity =>
+        {
+            entity.Property(d => d.EventType).HasMaxLength(80).IsRequired();
+            entity.Property(d => d.Payload).IsRequired();
+            entity.Property(d => d.Status).HasMaxLength(32).IsRequired();
+            entity.Property(d => d.ResponseBody).HasMaxLength(8000);
+            entity.Property(d => d.CreatedAtUtc).IsRequired();
+
+            entity.HasIndex(d => d.WebhookId);
+            entity.HasIndex(d => new { d.Status, d.NextRetryAt });
+
+            entity
+                .HasOne(d => d.Webhook)
+                .WithMany(w => w.Deliveries)
+                .HasForeignKey(d => d.WebhookId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(
+                d => _currentTenant.IsSet && d.Webhook!.OrganizationId == _currentTenant.OrganizationId);
         });
 
         builder.Entity<ApplicationRole>(entity =>

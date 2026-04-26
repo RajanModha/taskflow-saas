@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Persistence;
@@ -14,7 +15,8 @@ public sealed class DeleteTaskHandler(
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
-    IActivityLogger activityLogger) : IRequestHandler<DeleteTaskCommand, bool>
+    IActivityLogger activityLogger,
+    IWebhookDispatcher webhookDispatcher) : IRequestHandler<DeleteTaskCommand, bool>
 {
     public async Task<bool> Handle(DeleteTaskCommand request, CancellationToken cancellationToken)
     {
@@ -55,6 +57,13 @@ public sealed class DeleteTaskHandler(
 
         DashboardCacheInvalidation.InvalidateAfterTaskMutation(cache, orgId, currentUser.UserId, assigneeId, null);
         boardCacheVersion.BumpProject(projectId);
+
+        await webhookDispatcher.DispatchOrganizationEventAsync(
+            orgId,
+            WebhookEventTypes.TaskDeleted,
+            new { taskId, projectId, title },
+            cancellationToken);
+
         return true;
     }
 }

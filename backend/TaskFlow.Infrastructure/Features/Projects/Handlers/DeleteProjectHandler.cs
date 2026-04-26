@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Projects;
 using TaskFlow.Infrastructure.Persistence;
@@ -14,7 +15,8 @@ public sealed class DeleteProjectHandler(
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
-    IActivityLogger activityLogger)
+    IActivityLogger activityLogger,
+    IWebhookDispatcher webhookDispatcher)
     : IRequestHandler<DeleteProjectCommand, bool>
 {
     public async Task<bool> Handle(DeleteProjectCommand request, CancellationToken cancellationToken)
@@ -65,6 +67,12 @@ public sealed class DeleteProjectHandler(
 
         boardCacheVersion.RemoveProject(project.Id);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        await webhookDispatcher.DispatchOrganizationEventAsync(
+            orgId,
+            WebhookEventTypes.ProjectDeleted,
+            new { projectId, name },
+            cancellationToken);
 
         DashboardCacheInvalidation.InvalidateOrganizationStats(cache, orgId);
         DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId);

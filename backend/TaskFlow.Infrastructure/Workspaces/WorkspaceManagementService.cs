@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Infrastructure.Auth;
@@ -16,7 +17,8 @@ public sealed class WorkspaceManagementService(
     TaskFlowDbContext dbContext,
     IEmailService emailService,
     IOptions<EmailSettings> emailSettings,
-    TimeProvider timeProvider) : IWorkspaceManagementService
+    TimeProvider timeProvider,
+    IWebhookDispatcher webhookDispatcher) : IWorkspaceManagementService
 {
     private readonly EmailSettings _email = emailSettings.Value;
 
@@ -407,6 +409,17 @@ public sealed class WorkspaceManagementService(
 
         invite.AcceptedAtUtc = now;
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        await webhookDispatcher.DispatchOrganizationEventAsync(
+            invite.OrganizationId,
+            WebhookEventTypes.MemberJoined,
+            new
+            {
+                userId = targetUser.Id,
+                displayName = targetUser.DisplayName,
+                userName = targetUser.UserName,
+            },
+            cancellationToken);
 
         return (StatusCodes.Status200OK, new AcceptInviteJoinedResponse("You have joined the workspace."));
     }

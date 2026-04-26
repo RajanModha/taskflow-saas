@@ -4,6 +4,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Workspaces;
 using TaskFlow.Application.Notifications;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
@@ -21,7 +22,8 @@ public sealed class UpdateTaskHandler(
     INotificationService notificationService,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
-    IActivityLogger activityLogger)
+    IActivityLogger activityLogger,
+    IWebhookDispatcher webhookDispatcher)
     : IRequestHandler<UpdateTaskCommand, TaskDto?>
 {
     public async System.Threading.Tasks.Task<TaskDto?> Handle(UpdateTaskCommand request, CancellationToken cancellationToken)
@@ -205,6 +207,30 @@ public sealed class UpdateTaskHandler(
             previousAssigneeId,
             task.AssigneeId);
         boardCacheVersion.BumpProject(task.ProjectId);
+
+        if (previousStatus != request.Status)
+        {
+            await webhookDispatcher.DispatchOrganizationEventAsync(
+                task.OrganizationId,
+                WebhookEventTypes.TaskStatusChanged,
+                new
+                {
+                    taskId = task.Id,
+                    projectId = task.ProjectId,
+                    fromStatus = previousStatus.ToString(),
+                    toStatus = request.Status.ToString(),
+                },
+                cancellationToken);
+        }
+
+        if (previousAssigneeId != request.AssigneeId && request.AssigneeId is not null)
+        {
+            await webhookDispatcher.DispatchOrganizationEventAsync(
+                task.OrganizationId,
+                WebhookEventTypes.TaskAssigned,
+                new { taskId = task.Id, projectId = task.ProjectId, assigneeId = request.AssigneeId.Value },
+                cancellationToken);
+        }
 
         var refreshed = await dbContext.Tasks.AsNoTracking()
             .FirstAsync(t => t.Id == task.Id, cancellationToken);

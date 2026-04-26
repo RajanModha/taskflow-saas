@@ -1,8 +1,11 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Task = System.Threading.Tasks.Task;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Application.Workspaces;
+using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Features.Tasks;
 using TaskFlow.Infrastructure.Persistence;
@@ -13,7 +16,8 @@ public sealed class PatchTaskHandler(
     TaskFlowDbContext dbContext,
     ICurrentUser currentUser,
     IMemoryCache cache,
-    IBoardCacheVersion boardCacheVersion)
+    IBoardCacheVersion boardCacheVersion,
+    IWebhookDispatcher webhookDispatcher)
     : IRequestHandler<PatchTaskCommand, TaskDto?>
 {
     public async Task<TaskDto?> Handle(PatchTaskCommand request, CancellationToken cancellationToken)
@@ -37,6 +41,7 @@ public sealed class PatchTaskHandler(
 
         var previousAssigneeId = task.AssigneeId;
         var previousDueDate = task.DueDateUtc;
+        var previousStatus = task.Status;
         if (request.HasTitle)
         {
             task.Title = request.Title!;
@@ -82,6 +87,32 @@ public sealed class PatchTaskHandler(
             previousAssigneeId,
             task.AssigneeId);
         boardCacheVersion.BumpProject(task.ProjectId);
+
+        if (request.HasStatus && request.Status is DomainTaskStatus newStatus && previousStatus != newStatus)
+        {
+            await webhookDispatcher.DispatchOrganizationEventAsync(
+                task.OrganizationId,
+                WebhookEventTypes.TaskStatusChanged,
+                new
+                {
+                    taskId = task.Id,
+                    projectId = task.ProjectId,
+                    fromStatus = previousStatus.ToString(),
+                    toStatus = newStatus.ToString(),
+                },
+                cancellationToken);
+        }
+
+        if (request.HasAssigneeId &&
+            previousAssigneeId != task.AssigneeId &&
+            task.AssigneeId is { } newAssigneeId)
+        {
+            await webhookDispatcher.DispatchOrganizationEventAsync(
+                task.OrganizationId,
+                WebhookEventTypes.TaskAssigned,
+                new { taskId = task.Id, projectId = task.ProjectId, assigneeId = newAssigneeId },
+                cancellationToken);
+        }
 
         var refreshed = await dbContext.Tasks.AsNoTracking().FirstAsync(t => t.Id == task.Id, cancellationToken);
         var dtoList = await TaskProjection.ToDtosAsync(dbContext, [refreshed], cancellationToken);
