@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
-using TaskFlow.Application.Dashboard;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Persistence;
 
@@ -30,6 +30,7 @@ public sealed class DeleteTaskHandler(
         var taskId = task.Id;
         var title = task.Title;
         var projectId = task.ProjectId;
+        var assigneeId = task.AssigneeId;
         dbContext.Tasks.Remove(task);
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -50,7 +51,7 @@ public sealed class DeleteTaskHandler(
                 cancellationToken);
         }
 
-        cache.Remove(DashboardCacheKeys.DashboardStats(orgId));
+        DashboardCacheInvalidation.InvalidateAfterTaskMutation(cache, orgId, currentUser.UserId, assigneeId, null);
         boardCacheVersion.BumpProject(projectId);
         return true;
     }

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using TaskFlow.Application.Notifications;
 using TaskFlow.Infrastructure.Email;
 using TaskFlow.Infrastructure.Identity;
 using TaskFlow.Infrastructure.Persistence;
@@ -12,17 +12,14 @@ internal static class TaskAssignmentNotifier
 {
     public static async System.Threading.Tasks.Task NotifyAssigneeAsync(
         TaskFlowDbContext dbContext,
-        IEmailService emailService,
+        INotificationService notificationService,
         IOptions<EmailSettings> emailSettings,
-        ILogger logger,
         Guid? actorUserId,
         DomainTask task,
         string projectName,
         ApplicationUser assignee,
         CancellationToken cancellationToken)
     {
-        var baseUrl = emailSettings.Value.FrontendBaseUrl.TrimEnd('/');
-        var taskUrl = $"{baseUrl}/tasks/{task.Id}";
         var assignerName = "Someone";
         if (actorUserId is { } aid)
         {
@@ -37,24 +34,32 @@ internal static class TaskAssignmentNotifier
             }
         }
 
-        await emailService.SendEmailAsync(
-            assignee.Email ?? string.Empty,
-            assignee.UserName ?? assignee.Email ?? string.Empty,
-            $"You've been assigned: {task.Title}",
-            EmailTemplates.TaskAssigned(
-                assignee.UserName ?? assignee.Email ?? "there",
+        var assigneeName = assignee.DisplayName?.Trim() is { Length: > 0 } display
+            ? display
+            : assignee.UserName ?? assignee.Email ?? "there";
+
+        var title = "Task assigned";
+        var body = $"{assignerName} assigned you '{task.Title}'";
+
+        var baseUrl = emailSettings.Value.FrontendBaseUrl.TrimEnd('/');
+        var taskUrl = $"{baseUrl}/tasks/{task.Id}";
+
+        await notificationService.CreateAsync(
+            assignee.Id,
+            "task.assigned",
+            title,
+            body,
+            entityType: "Task",
+            entityId: task.Id,
+            sendEmail: true,
+            toEmail: assignee.Email,
+            emailSubject: $"You've been assigned: {task.Title}",
+            emailHtml: EmailTemplates.TaskAssigned(
+                assigneeName,
                 task.Title,
                 projectName,
                 assignerName,
                 taskUrl),
-            "TaskAssigned",
-            cancellationToken);
-
-        logger.LogInformation(
-            "Activity {ActivityType} TaskId={TaskId} AssigneeId={AssigneeId} ActorUserId={ActorUserId}",
-            "task.assigned",
-            task.Id,
-            assignee.Id,
-            actorUserId);
+            ct: cancellationToken);
     }
 }

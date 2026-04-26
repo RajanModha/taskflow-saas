@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
-using TaskFlow.Application.Dashboard;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Persistence;
 
@@ -11,6 +11,7 @@ namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class RemoveTaskTagHandler(
     TaskFlowDbContext dbContext,
+    ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion)
     : IRequestHandler<RemoveTaskTagCommand, int>
@@ -33,7 +34,8 @@ public sealed class RemoveTaskTagHandler(
 
         if (removed > 0)
         {
-            cache.Remove(DashboardCacheKeys.DashboardStats(task.OrganizationId));
+            DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+            DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
             boardCacheVersion.BumpProject(projectId);
         }
 

@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
-using TaskFlow.Application.Dashboard;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Infrastructure.Persistence;
@@ -75,7 +75,8 @@ public sealed class AddTaskTagHandler(
                 cancellationToken);
         }
 
-        cache.Remove(DashboardCacheKeys.DashboardStats(task.OrganizationId));
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
         boardCacheVersion.BumpProject(task.ProjectId);
 
         var refreshed = await dbContext.Tasks.AsNoTracking()

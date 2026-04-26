@@ -7,11 +7,13 @@ using TaskFlow.Application.Auth;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Notifications;
 using TaskFlow.Infrastructure.Activity;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Identity;
 using TaskFlow.Infrastructure.Projects;
 using TaskFlow.Infrastructure.Tenancy;
+using TaskFlow.Infrastructure.Notifications;
 using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Infrastructure.Services;
 using TaskFlow.Infrastructure.Workspaces;
@@ -63,8 +65,14 @@ public static class DependencyInjection
         services.AddScoped<IWorkspaceService, WorkspaceService>();
         services.AddScoped<IWorkspaceManagementService, WorkspaceManagementService>();
         services.AddScoped<IWorkspaceTagService, WorkspaceTagService>();
+        services.AddScoped<INotificationService, NotificationService>();
         services.AddSingleton<IAppInfo, AppInfoService>();
         services.AddHostedService<RefreshTokenCleanupHostedService>();
+        services.AddHostedService<NotificationCleanupHostedService>();
         return services;
     }
 }
+
+
+
+

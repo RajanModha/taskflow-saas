@@ -24,6 +24,8 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
 
     public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
 
+    public DbSet<Notification> Notifications => Set<Notification>();
+
     public DbSet<SeedRun> SeedRuns => Set<SeedRun>();
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
@@ -250,6 +252,25 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.HasIndex(a => a.OrganizationId);
         });
 
+        builder.Entity<Notification>(entity =>
+        {
+            entity.Property(n => n.Type).HasMaxLength(80).IsRequired();
+            entity.Property(n => n.Title).HasMaxLength(160).IsRequired();
+            entity.Property(n => n.Body).HasMaxLength(1000).IsRequired();
+            entity.Property(n => n.EntityType).HasMaxLength(32);
+            entity.Property(n => n.IsRead).HasDefaultValue(false).IsRequired();
+            entity.Property(n => n.CreatedAt).IsRequired();
+
+            entity
+                .HasOne<ApplicationUser>()
+                .WithMany()
+                .HasForeignKey(n => n.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt })
+                .IsDescending(false, false, true);
+        });
+
         builder.Entity<PendingInvite>(entity =>
         {
             entity.Property(i => i.Email).HasMaxLength(256).IsRequired();
@@ -285,3 +306,8 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
         });
     }
 }
+
+
+
+
+

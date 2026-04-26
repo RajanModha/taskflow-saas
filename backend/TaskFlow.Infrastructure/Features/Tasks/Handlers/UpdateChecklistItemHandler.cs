@@ -1,9 +1,12 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Notifications;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -14,7 +17,9 @@ public sealed class UpdateChecklistItemHandler(
     ICurrentUser currentUser,
     IBoardCacheVersion boardCacheVersion,
     TimeProvider timeProvider,
-    IActivityLogger activityLogger)
+    IActivityLogger activityLogger,
+    INotificationService notificationService,
+    IMemoryCache cache)
     : IRequestHandler<UpdateChecklistItemCommand, ChecklistItemDto?>
 {
     public async Task<ChecklistItemDto?> Handle(UpdateChecklistItemCommand request, CancellationToken cancellationToken)
@@ -71,8 +76,33 @@ public sealed class UpdateChecklistItemHandler(
                 new { itemId = item.Id, title = item.Title },
                 cancellationToken);
         }
+        if (request.IsCompleted == true && !wasCompleted && task.AssigneeId is { } assigneeId)
+        {
+            var hasIncomplete = await dbContext.ChecklistItems
+                .AsNoTracking()
+                .AnyAsync(c => c.TaskId == request.TaskId && !c.IsCompleted, cancellationToken);
+
+            if (!hasIncomplete)
+            {
+                await notificationService.CreateAsync(
+                    assigneeId,
+                    "task.checklist_done",
+                    "Checklist completed",
+                    $"Checklist for '{task.Title}' is fully completed",
+                    entityType: "Task",
+                    entityId: task.Id,
+                    ct: cancellationToken);
+            }
+        }
 
         boardCacheVersion.BumpProject(task.ProjectId);
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
+
         return ChecklistItemMapper.ToDto(item);
     }
 }
+
+
+

@@ -8,6 +8,7 @@ using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.OpenApi.Models;
+using Swashbuckle.AspNetCore.Filters;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using Serilog.Context;
@@ -66,6 +67,8 @@ builder.Services.AddApiVersioning(options =>
 
 builder.Services.AddSwaggerGen(options =>
 {
+    options.ExampleFilters();
+
     options.AddSecurityDefinition(
         "Bearer",
         new OpenApiSecurityScheme
@@ -94,6 +97,8 @@ builder.Services.AddSwaggerGen(options =>
             },
         });
 });
+
+builder.Services.AddSwaggerExamplesFromAssemblyOf<TaskFlow.API.Swagger.DashboardStatsExampleProvider>();
 
 builder.Services.AddTransient<
     Microsoft.Extensions.Options.IConfigureOptions<Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenOptions>,

@@ -1,9 +1,11 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Domain.Entities;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -11,8 +13,10 @@ namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 public sealed class AddChecklistItemHandler(
     TaskFlowDbContext dbContext,
     ICurrentTenant currentTenant,
+    ICurrentUser currentUser,
     IBoardCacheVersion boardCacheVersion,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IMemoryCache cache)
     : IRequestHandler<AddChecklistItemCommand, ChecklistItemDto?>
 {
     public async Task<ChecklistItemDto?> Handle(AddChecklistItemCommand request, CancellationToken cancellationToken)
@@ -84,6 +88,10 @@ public sealed class AddChecklistItemHandler(
         await tx.CommitAsync(cancellationToken);
 
         boardCacheVersion.BumpProject(task.ProjectId);
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
+
         return ChecklistItemMapper.ToDto(entity);
     }
 }

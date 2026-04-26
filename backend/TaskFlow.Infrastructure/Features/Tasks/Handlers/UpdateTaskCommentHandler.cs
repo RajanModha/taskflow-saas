@@ -2,9 +2,11 @@ using System.Text.Encodings.Web;
 using MediatR;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -13,7 +15,8 @@ public sealed class UpdateTaskCommentHandler(
     TaskFlowDbContext dbContext,
     ICurrentTenant currentTenant,
     ICurrentUser currentUser,
-    TimeProvider timeProvider) : IRequestHandler<UpdateTaskCommentCommand, UpdateTaskCommentResult>
+    TimeProvider timeProvider,
+    IMemoryCache cache) : IRequestHandler<UpdateTaskCommentCommand, UpdateTaskCommentResult>
 {
     public async System.Threading.Tasks.Task<UpdateTaskCommentResult> Handle(
         UpdateTaskCommentCommand request,
@@ -64,6 +67,9 @@ public sealed class UpdateTaskCommentHandler(
         comment.IsEdited = true;
         comment.UpdatedAtUtc = now;
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
 
         var author = await dbContext.Users
             .AsNoTracking()

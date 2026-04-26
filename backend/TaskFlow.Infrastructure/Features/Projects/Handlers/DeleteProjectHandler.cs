@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
-using TaskFlow.Application.Dashboard;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Projects;
 using TaskFlow.Infrastructure.Persistence;
 
@@ -52,7 +52,8 @@ public sealed class DeleteProjectHandler(
         dbContext.Projects.Remove(project);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        cache.Remove(DashboardCacheKeys.DashboardStats(orgId));
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, orgId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId);
         return true;
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Auth;
+using TaskFlow.Application.Notifications;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Domain.Common;
 using TaskFlow.Domain.Entities;
@@ -16,7 +17,8 @@ public sealed class WorkspaceService(
     TaskFlowDbContext dbContext,
     IUserSessionIssuer sessionIssuer,
     TimeProvider timeProvider,
-    IHttpContextAccessor httpContextAccessor) : IWorkspaceService
+    IHttpContextAccessor httpContextAccessor,
+    INotificationService notificationService) : IWorkspaceService
 {
     public async Task<WorkspaceOutcome> CreateAsync(
         Guid userId,
@@ -98,6 +100,34 @@ public sealed class WorkspaceService(
         user.WorkspaceRole = WorkspaceRole.Member;
         user.WorkspaceJoinedAtUtc = joinedAt;
         await userManager.UpdateAsync(user);
+
+        var admins = await dbContext.Users
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(u => u.OrganizationId == organization.Id &&
+                        (u.WorkspaceRole == WorkspaceRole.Owner || u.WorkspaceRole == WorkspaceRole.Admin))
+            .ToListAsync(cancellationToken);
+
+        var joinedName = user.DisplayName?.Trim() is { Length: > 0 } dn
+            ? dn
+            : user.UserName ?? user.Email ?? "A member";
+
+        foreach (var admin in admins)
+        {
+            if (admin.Id == user.Id)
+            {
+                continue;
+            }
+
+            await notificationService.CreateAsync(
+                admin.Id,
+                "member.joined",
+                "New member joined",
+                $"{joinedName} joined your workspace",
+                entityType: "Organization",
+                entityId: organization.Id,
+                ct: cancellationToken);
+        }
 
         AuthResponse response;
         try

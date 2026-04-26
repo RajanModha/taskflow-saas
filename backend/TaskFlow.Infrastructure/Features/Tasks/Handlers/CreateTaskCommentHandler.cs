@@ -2,10 +2,13 @@ using System.Text.Encodings.Web;
 using MediatR;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
+using TaskFlow.Application.Notifications;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -16,7 +19,9 @@ public sealed class CreateTaskCommentHandler(
     ICurrentUser currentUser,
     TimeProvider timeProvider,
     IBoardCacheVersion boardCacheVersion,
-    IActivityLogger activityLogger) : IRequestHandler<CreateTaskCommentCommand, CreateTaskCommentResult>
+    IActivityLogger activityLogger,
+    INotificationService notificationService,
+    IMemoryCache cache) : IRequestHandler<CreateTaskCommentCommand, CreateTaskCommentResult>
 {
     public async System.Threading.Tasks.Task<CreateTaskCommentResult> Handle(
         CreateTaskCommentCommand request,
@@ -73,9 +78,30 @@ public sealed class CreateTaskCommentHandler(
             task.OrganizationId,
             new { commentId = entity.Id },
             cancellationToken);
+        if (task.AssigneeId is { } assigneeId && assigneeId != authorId)
+        {
+            var authorName = author.DisplayName?.Trim() is { Length: > 0 } dn
+                ? dn
+                : author.UserName ?? "Someone";
+
+            await notificationService.CreateAsync(
+                assigneeId,
+                "task.commented",
+                "New comment",
+                $"{authorName} commented on '{task.Title}'",
+                entityType: "Task",
+                entityId: task.Id,
+                ct: cancellationToken);
+        }
 
         boardCacheVersion.BumpProject(task.ProjectId);
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
 
         return new CreateTaskCommentResult(CommentMapper.ToDto(entity, author), StatusCodes.Status201Created);
     }
 }
+
+
+

@@ -1,11 +1,13 @@
 using AutoMapper;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Projects;
 using TaskFlow.Application.Tenancy;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
@@ -15,7 +17,8 @@ public sealed class CreateProjectHandler(
     ICurrentTenant currentTenant,
     ICurrentUser currentUser,
     IMapper mapper,
-    IActivityLogger activityLogger)
+    IActivityLogger activityLogger,
+    IMemoryCache cache)
     : IRequestHandler<CreateProjectCommand, ProjectDto>
 {
     public async Task<ProjectDto> Handle(CreateProjectCommand request, CancellationToken cancellationToken)
@@ -39,6 +42,9 @@ public sealed class CreateProjectHandler(
 
         await dbContext.Projects.AddAsync(project, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, currentTenant.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId);
 
         if (currentUser.UserId is { } actorId)
         {

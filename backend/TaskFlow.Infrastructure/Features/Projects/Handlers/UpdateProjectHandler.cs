@@ -1,9 +1,11 @@
 using AutoMapper;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Projects;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
@@ -13,7 +15,8 @@ public sealed class UpdateProjectHandler(
     ICurrentUser currentUser,
     IMapper mapper,
     IBoardCacheVersion boardCacheVersion,
-    IActivityLogger activityLogger)
+    IActivityLogger activityLogger,
+    IMemoryCache cache)
     : IRequestHandler<UpdateProjectCommand, ProjectDto?>
 {
     public async Task<ProjectDto?> Handle(UpdateProjectCommand request, CancellationToken cancellationToken)
@@ -51,6 +54,9 @@ public sealed class UpdateProjectHandler(
                 new { previousName, previousDescription, name = project.Name, description = project.Description },
                 cancellationToken);
         }
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, project.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId);
 
         boardCacheVersion.BumpProject(project.Id);
         return mapper.Map<ProjectDto>(project);

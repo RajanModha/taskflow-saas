@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
-using TaskFlow.Application.Dashboard;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Projects;
 using TaskFlow.Infrastructure.Identity;
 using TaskFlow.Infrastructure.Persistence;
@@ -19,7 +19,9 @@ public sealed class MoveProjectBoardTaskHandler(
     IActivityLogger activityLogger)
     : IRequestHandler<MoveProjectBoardTaskCommand, BoardTaskDto?>
 {
-    public async Task<BoardTaskDto?> Handle(MoveProjectBoardTaskCommand request, CancellationToken cancellationToken)
+    public async System.Threading.Tasks.Task<BoardTaskDto?> Handle(
+        MoveProjectBoardTaskCommand request,
+        CancellationToken cancellationToken)
     {
         var task = await dbContext.Tasks
             .FirstOrDefaultAsync(
@@ -59,12 +61,19 @@ public sealed class MoveProjectBoardTaskHandler(
         }
 
         boardCacheVersion.BumpProject(task.ProjectId);
-        cache.Remove(DashboardCacheKeys.DashboardStats(task.OrganizationId));
+        DashboardCacheInvalidation.InvalidateAfterTaskMutation(
+            cache,
+            task.OrganizationId,
+            currentUser.UserId,
+            task.AssigneeId,
+            task.AssigneeId);
 
         return await LoadBoardTaskDtoAsync(task.Id, cancellationToken);
     }
 
-    private async Task<BoardTaskDto?> LoadBoardTaskDtoAsync(Guid taskId, CancellationToken cancellationToken)
+    private async System.Threading.Tasks.Task<BoardTaskDto?> LoadBoardTaskDtoAsync(
+        Guid taskId,
+        CancellationToken cancellationToken)
     {
         var task = await dbContext.Tasks
             .AsNoTracking()

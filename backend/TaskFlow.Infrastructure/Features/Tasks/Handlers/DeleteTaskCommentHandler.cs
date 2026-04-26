@@ -1,10 +1,12 @@
 using MediatR;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Domain.Entities;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -14,7 +16,8 @@ public sealed class DeleteTaskCommentHandler(
     ICurrentTenant currentTenant,
     ICurrentUser currentUser,
     TimeProvider timeProvider,
-    IBoardCacheVersion boardCacheVersion) : IRequestHandler<DeleteTaskCommentCommand, DeleteTaskCommentResult>
+    IBoardCacheVersion boardCacheVersion,
+    IMemoryCache cache) : IRequestHandler<DeleteTaskCommentCommand, DeleteTaskCommentResult>
 {
     public async System.Threading.Tasks.Task<DeleteTaskCommentResult> Handle(
         DeleteTaskCommentCommand request,
@@ -72,6 +75,9 @@ public sealed class DeleteTaskCommentHandler(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         boardCacheVersion.BumpProject(task.ProjectId);
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
 
         return new DeleteTaskCommentResult(StatusCodes.Status204NoContent);
     }

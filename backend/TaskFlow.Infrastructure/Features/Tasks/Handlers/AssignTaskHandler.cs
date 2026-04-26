@@ -1,11 +1,11 @@
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
-using TaskFlow.Application.Dashboard;
+using TaskFlow.Application.Notifications;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Email;
 using TaskFlow.Infrastructure.Features.Tasks;
@@ -18,9 +18,8 @@ namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 public sealed class AssignTaskHandler(
     TaskFlowDbContext dbContext,
     ICurrentUser currentUser,
-    IEmailService emailService,
     IOptions<EmailSettings> emailSettings,
-    ILogger<AssignTaskHandler> logger,
+    INotificationService notificationService,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
     IActivityLogger activityLogger) : IRequestHandler<AssignTaskCommand, TaskDto?>
@@ -107,9 +106,8 @@ public sealed class AssignTaskHandler(
 
             await TaskAssignmentNotifier.NotifyAssigneeAsync(
                 dbContext,
-                emailService,
+                notificationService,
                 emailSettings,
-                logger,
                 currentUser.UserId,
                 task,
                 project.Name,
@@ -117,7 +115,12 @@ public sealed class AssignTaskHandler(
                 cancellationToken);
         }
 
-        cache.Remove(DashboardCacheKeys.DashboardStats(task.OrganizationId));
+        DashboardCacheInvalidation.InvalidateAfterTaskMutation(
+            cache,
+            task.OrganizationId,
+            currentUser.UserId,
+            previousAssigneeId,
+            request.AssigneeId);
         boardCacheVersion.BumpProject(task.ProjectId);
 
         var refreshed = await dbContext.Tasks.AsNoTracking()
@@ -126,3 +129,10 @@ public sealed class AssignTaskHandler(
         return dtoList[0];
     }
 }
+
+
+
+
+
+
+

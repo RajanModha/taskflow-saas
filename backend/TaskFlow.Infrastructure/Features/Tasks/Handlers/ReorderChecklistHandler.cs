@@ -2,9 +2,11 @@ using FluentValidation;
 using FluentValidation.Results;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -12,7 +14,9 @@ namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 public sealed class ReorderChecklistHandler(
     TaskFlowDbContext dbContext,
     ICurrentTenant currentTenant,
-    IBoardCacheVersion boardCacheVersion)
+    ICurrentUser currentUser,
+    IBoardCacheVersion boardCacheVersion,
+    IMemoryCache cache)
     : IRequestHandler<ReorderChecklistCommand, IReadOnlyList<ChecklistItemDto>?>
 {
     public async Task<IReadOnlyList<ChecklistItemDto>?> Handle(ReorderChecklistCommand request, CancellationToken cancellationToken)
@@ -64,6 +68,9 @@ public sealed class ReorderChecklistHandler(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         boardCacheVersion.BumpProject(task.ProjectId);
+
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
 
         var ordered = request.OrderedIds
             .Select(id => items.First(x => x.Id == id))
