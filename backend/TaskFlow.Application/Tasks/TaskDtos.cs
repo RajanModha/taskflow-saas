@@ -5,6 +5,8 @@ using TaskFlow.Application.Common;
 
 namespace TaskFlow.Application.Tasks;
 
+public sealed record TaskMilestoneDto(Guid Id, string Name);
+
 public sealed record TaskDto(
     Guid Id,
     Guid ProjectId,
@@ -16,6 +18,9 @@ public sealed record TaskDto(
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc,
     TaskAssigneeDto? Assignee,
+    TaskMilestoneDto? Milestone,
+    bool IsBlocked,
+    int BlockerCount,
     int CommentCount,
     IReadOnlyList<TagDto> Tags,
     int ChecklistTotal,
@@ -50,7 +55,8 @@ public sealed record CreateTaskCommand(
     DomainTaskPriority Priority,
     DateTime? DueDateUtc,
     Guid? AssigneeId = null,
-    Guid[]? TagIds = null) : IRequest<TaskDto?>;
+    Guid[]? TagIds = null,
+    Guid? MilestoneId = null) : IRequest<TaskDto?>;
 
 public sealed record UpdateTaskCommand(
     Guid TaskId,
@@ -60,7 +66,8 @@ public sealed record UpdateTaskCommand(
     DomainTaskPriority Priority,
     DateTime? DueDateUtc,
     Guid? AssigneeId,
-    Guid[]? TagIds) : IRequest<TaskDto?>;
+    Guid[]? TagIds,
+    Guid? MilestoneId) : IRequest<TaskDto?>;
 
 public sealed record DeleteTaskCommand(Guid TaskId) : IRequest<bool>;
 public sealed record RestoreTaskCommand(Guid TaskId) : IRequest<TaskDto?>;
@@ -111,6 +118,8 @@ public sealed record GetTasksQuery(
     bool? AssignedToMe,
     Guid? AssigneeId,
     Guid? TagId,
+    Guid? MilestoneId,
+    bool? IsBlocked,
     bool IncludeDeleted) : IRequest<PagedResultDto<TaskDto>>;
 
 public sealed record AssignTaskCommand(Guid TaskId, Guid? AssigneeId) : IRequest<TaskDto?>;

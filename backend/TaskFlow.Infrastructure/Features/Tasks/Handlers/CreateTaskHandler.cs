@@ -65,6 +65,22 @@ public sealed class CreateTaskHandler(
             return null;
         }
 
+        Guid? milestoneId = null;
+        if (request.MilestoneId is { } milestoneIdValue)
+        {
+            var milestoneOk = await dbContext.Milestones
+                .AsNoTracking()
+                .AnyAsync(
+                    m => m.Id == milestoneIdValue && m.ProjectId == request.ProjectId,
+                    cancellationToken);
+            if (!milestoneOk)
+            {
+                return null;
+            }
+
+            milestoneId = milestoneIdValue;
+        }
+
         var now = DateTime.UtcNow;
 
         var task = new DomainTask
@@ -80,6 +96,7 @@ public sealed class CreateTaskHandler(
             CreatedAtUtc = now,
             UpdatedAtUtc = now,
             AssigneeId = request.AssigneeId,
+            MilestoneId = milestoneId,
             ReminderSent = false,
         };
 

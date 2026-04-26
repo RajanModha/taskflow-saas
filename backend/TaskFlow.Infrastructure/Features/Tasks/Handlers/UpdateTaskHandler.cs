@@ -70,12 +70,26 @@ public sealed class UpdateTaskHandler(
             return null;
         }
 
+        if (request.MilestoneId is { } newMilestoneId)
+        {
+            var milestoneOk = await dbContext.Milestones
+                .AsNoTracking()
+                .AnyAsync(
+                    m => m.Id == newMilestoneId && m.ProjectId == task.ProjectId,
+                    cancellationToken);
+            if (!milestoneOk)
+            {
+                return null;
+            }
+        }
+
         task.Title = request.Title;
         task.Description = request.Description;
         task.Status = request.Status;
         task.Priority = request.Priority;
         task.DueDateUtc = request.DueDateUtc;
         task.AssigneeId = request.AssigneeId;
+        task.MilestoneId = request.MilestoneId;
         task.UpdatedAtUtc = DateTime.UtcNow;
 
         if (previousAssigneeId != task.AssigneeId || previousDue != task.DueDateUtc)

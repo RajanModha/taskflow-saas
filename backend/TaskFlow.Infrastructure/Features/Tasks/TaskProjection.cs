@@ -3,6 +3,7 @@ using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Identity;
 using TaskFlow.Infrastructure.Persistence;
 using DomainTask = TaskFlow.Domain.Entities.Task;
+using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.Infrastructure.Features.Tasks;
 
@@ -21,6 +22,9 @@ internal static class TaskProjection
     public static TaskDto ToDto(
         DomainTask task,
         TaskAssigneeDto? assignee,
+        TaskMilestoneDto? milestone,
+        bool isBlocked,
+        int blockerCount,
         int commentCount,
         IReadOnlyList<TagDto> tags,
         int checklistTotal,
@@ -37,6 +41,9 @@ internal static class TaskProjection
             task.CreatedAtUtc,
             task.UpdatedAtUtc,
             assignee,
+            milestone,
+            isBlocked,
+            blockerCount,
             commentCount,
             tags,
             checklistTotal,
@@ -67,6 +74,35 @@ internal static class TaskProjection
         }
 
         var taskIds = tasks.Select(t => t.Id).ToList();
+
+        var milestoneIds = tasks.Where(t => t.MilestoneId.HasValue).Select(t => t.MilestoneId!.Value).Distinct().ToList();
+        Dictionary<Guid, TaskMilestoneDto> milestoneById = new();
+        if (milestoneIds.Count > 0)
+        {
+            var rows = await dbContext.Milestones
+                .AsNoTracking()
+                .Where(m => milestoneIds.Contains(m.Id))
+                .Select(m => new { m.Id, m.Name })
+                .ToListAsync(cancellationToken);
+            foreach (var row in rows)
+            {
+                milestoneById[row.Id] = new TaskMilestoneDto(row.Id, row.Name);
+            }
+        }
+
+        var activeBlockerRows = await (
+                from d in dbContext.TaskDependencies.AsNoTracking()
+                join b in dbContext.Tasks.AsNoTracking() on d.BlockingTaskId equals b.Id
+                where taskIds.Contains(d.BlockedTaskId)
+                      && b.Status != DomainTaskStatus.Done
+                      && b.Status != DomainTaskStatus.Cancelled
+                select d.BlockedTaskId)
+            .ToListAsync(cancellationToken);
+
+        var blockerCountByTask = activeBlockerRows
+            .GroupBy(id => id)
+            .ToDictionary(g => g.Key, g => g.Count());
+
         var commentCounts = await dbContext.Comments
             .AsNoTracking()
             .Where(c => taskIds.Contains(c.TaskId) && !c.IsDeleted)
@@ -108,12 +144,31 @@ internal static class TaskProjection
                     assignee = new TaskAssigneeDto(u.Id, u.UserName ?? string.Empty, u.DisplayName);
                 }
 
+                TaskMilestoneDto? milestone = null;
+                if (t.MilestoneId is { } mid && milestoneById.TryGetValue(mid, out var ms))
+                {
+                    milestone = ms;
+                }
+
+                blockerCountByTask.TryGetValue(t.Id, out var bCount);
+                var isBlocked = bCount > 0;
+
                 commentCounts.TryGetValue(t.Id, out var count);
                 tagsByTask.TryGetValue(t.Id, out var tags);
                 checklistStats.TryGetValue(t.Id, out var cl);
                 var total = cl.Total;
                 var completed = cl.Completed;
-                return ToDto(t, assignee, count, tags ?? [], total, completed, ChecklistProgress(total, completed));
+                return ToDto(
+                    t,
+                    assignee,
+                    milestone,
+                    isBlocked,
+                    bCount,
+                    count,
+                    tags ?? [],
+                    total,
+                    completed,
+                    ChecklistProgress(total, completed));
             })
             .ToList();
     }

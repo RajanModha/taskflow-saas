@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
+using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 using TaskFlow.Infrastructure.Features.Tasks;
 using TaskFlow.Infrastructure.Persistence;
 
@@ -70,6 +71,22 @@ public sealed class GetTasksHandler(
         {
             var tagId = request.TagId.Value;
             query = query.Where(t => dbContext.TaskTags.Any(tt => tt.TaskId == t.Id && tt.TagId == tagId));
+        }
+
+        if (request.MilestoneId.HasValue)
+        {
+            query = query.Where(t => t.MilestoneId == request.MilestoneId.Value);
+        }
+
+        if (request.IsBlocked == true)
+        {
+            query = query.Where(t =>
+                dbContext.TaskDependencies.Any(d =>
+                    d.BlockedTaskId == t.Id &&
+                    dbContext.Tasks.Any(b =>
+                        b.Id == d.BlockingTaskId
+                        && b.Status != DomainTaskStatus.Done
+                        && b.Status != DomainTaskStatus.Cancelled)));
         }
 
         if (!string.IsNullOrWhiteSpace(request.Q))

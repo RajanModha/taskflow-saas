@@ -32,7 +32,8 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
         TaskPriority Priority,
         DateTime? DueDateUtc,
         Guid? AssigneeId,
-        Guid[]? TagIds);
+        Guid[]? TagIds,
+        Guid? MilestoneId);
 
     public sealed record AssignTaskRequest(Guid? AssigneeId);
 
@@ -61,6 +62,8 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
         [FromQuery] bool? assignedToMe = null,
         [FromQuery] Guid? assigneeId = null,
         [FromQuery] Guid? tagId = null,
+        [FromQuery] Guid? milestoneId = null,
+        [FromQuery] bool? isBlocked = null,
         [FromQuery] bool includeDeleted = false,
         CancellationToken cancellationToken = default)
     {
@@ -110,6 +113,8 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
                 assignedToMe,
                 assigneeId,
                 tagId,
+                milestoneId,
+                isBlocked,
                 includeDeleted),
             cancellationToken);
 
@@ -223,6 +228,60 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
     {
         var result = await mediator.Send(new GetOverdueTasksQuery(page, pageSize), cancellationToken);
         return Ok(result);
+    }
+
+    public sealed record AddTaskDependencyRequest(Guid BlockingTaskId);
+
+    public sealed record CycleErrorResponse(string Detail);
+
+    [HttpGet("{taskId:guid}/dependencies")]
+    [ProducesResponseType(typeof(TaskDependenciesResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TaskDependenciesResponse>> GetDependencies(
+        [FromRoute] Guid taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await mediator.Send(new GetTaskDependenciesQuery(taskId), cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost("{taskId:guid}/dependencies")]
+    [ProducesResponseType(typeof(DependencyDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(CycleErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> AddDependency(
+        [FromRoute] Guid taskId,
+        [FromBody] AddTaskDependencyRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var outcome = await mediator.Send(
+            new AddTaskDependencyCommand(taskId, request.BlockingTaskId),
+            cancellationToken);
+        return outcome switch
+        {
+            AddTaskDependencyResult.Ok ok => CreatedAtAction(nameof(GetDependencies), new { taskId }, ok.Dependency),
+            AddTaskDependencyResult.Cycle => BadRequest(new CycleErrorResponse("This dependency would create a circular chain.")),
+            AddTaskDependencyResult.SelfReference => BadRequest(new CycleErrorResponse("A task cannot depend on itself.")),
+            AddTaskDependencyResult.MaxDependencies => BadRequest(new { detail = "This task already has the maximum of 10 dependencies." }),
+            AddTaskDependencyResult.Duplicate => Conflict(),
+            AddTaskDependencyResult.NotFound => NotFound(),
+            _ => NotFound(),
+        };
+    }
+
+    [HttpDelete("{taskId:guid}/dependencies/{blockingTaskId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RemoveDependency(
+        [FromRoute] Guid taskId,
+        [FromRoute] Guid blockingTaskId,
+        CancellationToken cancellationToken = default)
+    {
+        var removed = await mediator.Send(
+            new RemoveTaskDependencyCommand(taskId, blockingTaskId),
+            cancellationToken);
+        return removed ? NoContent() : NotFound();
     }
 
     public sealed record CreateCommentRequest(string Content);
@@ -435,7 +494,7 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
         {
             ModelState.AddModelError(
                 "projectId",
-                "Project was not found in your workspace, the assignee is invalid, or one or more tags are not in this workspace.");
+                "Project was not found in your workspace, the assignee is invalid, the milestone is invalid, or one or more tags are not in this workspace.");
             return ValidationProblem(ModelState);
         }
 
@@ -458,13 +517,14 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
             request.Priority,
             request.DueDateUtc,
             request.AssigneeId,
-            request.TagIds);
+            request.TagIds,
+            request.MilestoneId);
         var updated = await mediator.Send(cmd, cancellationToken);
         if (updated is null)
         {
             ModelState.AddModelError(
                 "assigneeId",
-                "Task was not found, the assignee is invalid, or one or more tags are not in this workspace.");
+                "Task was not found, the assignee is invalid, the milestone is invalid, or one or more tags are not in this workspace.");
             return ValidationProblem(ModelState);
         }
 

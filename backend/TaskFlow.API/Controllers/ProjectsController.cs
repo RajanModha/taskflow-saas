@@ -53,6 +53,78 @@ public sealed class ProjectsController(IMediator mediator) : ControllerBase
         return result is null ? NotFound() : Ok(result);
     }
 
+    public sealed record CreateMilestoneRequest(string Name, string? Description, DateTime? DueDateUtc);
+
+    public sealed record UpdateMilestoneRequest(string Name, string? Description, DateTime? DueDateUtc);
+
+    [HttpGet("{projectId:guid}/milestones")]
+    [ProducesResponseType(typeof(IReadOnlyList<MilestoneDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<MilestoneDto>>> GetMilestones(
+        [FromRoute] Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await mediator.Send(new GetMilestonesQuery(projectId), cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost("{projectId:guid}/milestones")]
+    [ProducesResponseType(typeof(MilestoneDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<MilestoneDto>> CreateMilestone(
+        [FromRoute] Guid projectId,
+        [FromBody] CreateMilestoneRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            ModelState.AddModelError(nameof(request.Name), "Name is required.");
+            return ValidationProblem(ModelState);
+        }
+
+        var created = await mediator.Send(
+            new CreateMilestoneCommand(projectId, request.Name.Trim(), request.Description, request.DueDateUtc),
+            cancellationToken);
+        return created is null
+            ? NotFound()
+            : CreatedAtAction(nameof(GetMilestones), new { projectId }, created);
+    }
+
+    [HttpPut("{projectId:guid}/milestones/{milestoneId:guid}")]
+    [ProducesResponseType(typeof(MilestoneDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<MilestoneDto>> UpdateMilestone(
+        [FromRoute] Guid projectId,
+        [FromRoute] Guid milestoneId,
+        [FromBody] UpdateMilestoneRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            ModelState.AddModelError(nameof(request.Name), "Name is required.");
+            return ValidationProblem(ModelState);
+        }
+
+        var updated = await mediator.Send(
+            new UpdateMilestoneCommand(projectId, milestoneId, request.Name.Trim(), request.Description, request.DueDateUtc),
+            cancellationToken);
+        return updated is null ? NotFound() : Ok(updated);
+    }
+
+    [HttpDelete("{projectId:guid}/milestones/{milestoneId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteMilestone(
+        [FromRoute] Guid projectId,
+        [FromRoute] Guid milestoneId,
+        CancellationToken cancellationToken = default)
+    {
+        var deleted = await mediator.Send(new DeleteMilestoneCommand(projectId, milestoneId), cancellationToken);
+        return deleted ? NoContent() : NotFound();
+    }
+
     [HttpGet("{projectId:guid}/export")]
     [EnableRateLimiting("export")]
     [Produces("application/json")]

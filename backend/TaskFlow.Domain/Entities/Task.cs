@@ -36,6 +36,8 @@ public sealed class Task : ISoftDeletable
 
     public Guid? AssigneeId { get; set; }
 
+    public Guid? MilestoneId { get; set; }
+
     public bool ReminderSent { get; set; }
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
@@ -44,10 +46,16 @@ public sealed class Task : ISoftDeletable
     // Navigation optional; EF can manage with FK if needed.
     public Project? Project { get; set; }
 
+    public Milestone? Milestone { get; set; }
+
     public ICollection<Comment> Comments { get; set; } = new List<Comment>();
 
     public ICollection<TaskTag> TaskTags { get; set; } = new List<TaskTag>();
 
     public ICollection<ChecklistItem> ChecklistItems { get; set; } = new List<ChecklistItem>();
+
+    public ICollection<TaskDependency> BlockedByDependencies { get; set; } = new List<TaskDependency>();
+
+    public ICollection<TaskDependency> BlockingDependencies { get; set; } = new List<TaskDependency>();
 }
 

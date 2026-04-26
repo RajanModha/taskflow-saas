@@ -15,6 +15,10 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<TaskFlow.Domain.Entities.Task> Tasks => Set<TaskFlow.Domain.Entities.Task>();
 
+    public DbSet<Milestone> Milestones => Set<Milestone>();
+
+    public DbSet<TaskDependency> TaskDependencies => Set<TaskDependency>();
+
     public DbSet<Comment> Comments => Set<Comment>();
 
     public DbSet<Tag> Tags => Set<Tag>();
@@ -113,6 +117,27 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.HasIndex(p => new { p.Id, p.OrganizationId }).IsUnique();
         });
 
+        builder.Entity<Milestone>(entity =>
+        {
+            entity.Property(m => m.Name).HasMaxLength(100).IsRequired();
+            entity.Property(m => m.Description).HasMaxLength(2000);
+            entity.Property(m => m.CreatedAtUtc).IsRequired();
+            entity.Property(m => m.UpdatedAtUtc).IsRequired();
+            entity.Property(m => m.IsDeleted).IsRequired().HasDefaultValue(false);
+            entity.Property(m => m.OrganizationId).IsRequired();
+
+            entity
+                .HasOne(m => m.Project)
+                .WithMany()
+                .HasForeignKey(m => new { m.ProjectId, m.OrganizationId })
+                .HasPrincipalKey(nameof(Project.Id), nameof(Project.OrganizationId))
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(m => _currentTenant.IsSet && m.OrganizationId == _currentTenant.OrganizationId);
+            entity.HasIndex(m => m.OrganizationId);
+            entity.HasIndex(m => new { m.ProjectId, m.IsDeleted });
+        });
+
         builder.Entity<TaskFlow.Domain.Entities.Task>(entity =>
         {
             entity.Property(t => t.Title).HasMaxLength(200).IsRequired();
@@ -152,6 +177,35 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
                 .WithMany()
                 .HasForeignKey(t => t.AssigneeId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            entity
+                .HasOne(t => t.Milestone)
+                .WithMany(m => m.Tasks)
+                .HasForeignKey(t => t.MilestoneId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<TaskDependency>(entity =>
+        {
+            entity.HasKey(d => new { d.BlockedTaskId, d.BlockingTaskId });
+
+            entity
+                .HasOne(d => d.BlockedTask)
+                .WithMany(t => t.BlockedByDependencies)
+                .HasForeignKey(d => d.BlockedTaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity
+                .HasOne(d => d.BlockingTask)
+                .WithMany(t => t.BlockingDependencies)
+                .HasForeignKey(d => d.BlockingTaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(
+                d => _currentTenant.IsSet && d.BlockedTask.OrganizationId == _currentTenant.OrganizationId);
+
+            entity.HasIndex(d => d.BlockedTaskId);
+            entity.HasIndex(d => d.BlockingTaskId);
         });
 
         builder.Entity<Comment>(entity =>
