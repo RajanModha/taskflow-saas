@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.RateLimiting;
 using TaskFlow.Application.Auth;
 using Asp.Versioning;
 
@@ -14,6 +15,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
 {
     /// <summary>Register a new user (assigned the User role). Sends a verification email; no JWT until verified.</summary>
     [HttpPost("register")]
+    [EnableRateLimiting("auth")]
     [ProducesResponseType(typeof(RegisterPendingResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
@@ -47,6 +49,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
 
     /// <summary>Resend the verification email (rate-limited; always returns 200).</summary>
     [HttpPost("resend-verification")]
+    [EnableRateLimiting("auth")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> ResendVerification(
         [FromBody] ResendVerificationRequest request,
@@ -59,6 +62,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     /// <summary>Request a password reset link (always returns 200 for enumeration safety).</summary>
     [AllowAnonymous]
     [HttpPost("forgot-password")]
+    [EnableRateLimiting("auth")]
     [ProducesResponseType(typeof(ForgotPasswordResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ForgotPassword(
@@ -72,6 +76,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     /// <summary>Complete password reset using the token from the email link.</summary>
     [AllowAnonymous]
     [HttpPost("reset-password")]
+    [EnableRateLimiting("auth_strict")]
     [ProducesResponseType(typeof(ResetPasswordResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
@@ -194,13 +199,12 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
 
     /// <summary>Authenticate and receive a JWT bearer token.</summary>
     [HttpPost("login")]
+    [EnableRateLimiting("auth")]
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
-        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
-
         var outcome = await authService.LoginAsync(request, cancellationToken);
         return outcome switch
         {
@@ -356,3 +360,4 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         return ValidationProblem(ModelState);
     }
 }
+

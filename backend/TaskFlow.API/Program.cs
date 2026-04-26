@@ -2,7 +2,10 @@ using System.Security.Claims;
 using System.Text;
 using Asp.Versioning;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Asp.Versioning.ApiExplorer;
+using HealthChecks.UI.Client;
 using MediatR;
 using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -22,12 +25,20 @@ using TaskFlow.Infrastructure;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Email;
 using TaskFlow.Infrastructure.Features.Tasks;
+using TaskFlow.Infrastructure.Persistence;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using System.Threading.RateLimiting;
 
 Serilog.Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 10_485_760; // 10MB
+});
 
 builder.Host.UseSerilog((context, loggerConfiguration) =>
 {
@@ -45,6 +56,88 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddMediatR(typeof(TaskFlow.Infrastructure.DependencyInjection).Assembly);
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, ct) =>
+    {
+        context.HttpContext.Response.Headers.RetryAfter = "60";
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            type = "rate_limit_exceeded",
+            title = "Too many requests",
+            detail = "Please slow down and try again shortly.",
+            status = 429,
+        }, ct);
+    };
+
+    // Endpoint policies (e.g. auth) apply in addition to this global limiter.
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+    {
+        var userId = httpContext.User.FindFirst("sub")?.Value
+                     ?? httpContext.Connection.RemoteIpAddress?.ToString()
+                     ?? "anon";
+
+        return RateLimitPartition.GetSlidingWindowLimiter(
+            userId,
+            _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = 200,
+                Window = TimeSpan.FromMinutes(1),
+                SegmentsPerWindow = 4,
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            });
+    });
+
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
+
+    options.AddPolicy("strict", httpContext =>
+        RateLimitPartition.GetTokenBucketLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 5,
+                ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+                TokensPerPeriod = 1,
+                AutoReplenishment = true,
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            }));
+
+    // Single endpoint attribute: chain auth (10/min per IP) + strict token bucket (same as "strict").
+    options.AddPolicy("auth_strict", httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.Get(ip, _ => RateLimiter.CreateChained(
+            new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }),
+            new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 5,
+                ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+                TokensPerPeriod = 1,
+                AutoReplenishment = true,
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            })));
+    });
+});
 
 builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddFluentValidationClientsideAdapters();
@@ -164,6 +257,9 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<TaskFlowDbContext>("database")
+    .AddCheck("self", () => HealthCheckResult.Healthy());
 
 builder.Services.Configure<EmailSettings>(
     builder.Configuration.GetSection("Email"));
@@ -193,14 +289,14 @@ if (allowedCorsOrigins is null || allowedCorsOrigins.Length == 0)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(
-        "Frontend",
+        "TaskFlowPolicy",
         policy =>
         {
-            // Frontend origins are configured via appsettings/environment variables.
             policy
                 .WithOrigins(allowedCorsOrigins)
-                .AllowAnyHeader()
-                .AllowAnyMethod();
+                .AllowAnyMethod()
+                .WithHeaders("Content-Type", "Authorization", "x-api-version")
+                .WithExposedHeaders("X-Correlation-ID", "Retry-After");
         });
 });
 
@@ -224,6 +320,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseSerilogRequestLogging();
+app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseExceptionHandler();
 // Avoid HTTP->HTTPS redirects in local dev: browser preflight (OPTIONS) requests
 // fail CORS when redirected.
@@ -231,12 +328,17 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-app.UseCors("Frontend");
+app.UseCors("TaskFlowPolicy");
+app.UseRateLimiter();
 app.UseAuthentication();
 // Tenant guard runs after auth so claim-based org resolution is available.
 app.UseMiddleware<TenantGuardMiddleware>();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse,
+});
 
 try
 {

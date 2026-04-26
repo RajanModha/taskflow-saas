@@ -126,6 +126,7 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
     }
 
     [HttpPost("{taskId:guid}/comments")]
+    [RequestSizeLimit(51200)]
     [ProducesResponseType(typeof(CommentDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

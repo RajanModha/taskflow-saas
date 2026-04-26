@@ -249,6 +249,8 @@ public sealed class AuthService(
 
     public async Task<LoginOutcome> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
     {
+        static Task DelayOnFailureAsync(CancellationToken ct) => Task.Delay(Random.Shared.Next(50, 200), ct);
+
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
         var user = await dbContext.Users
             .IgnoreQueryFilters()
@@ -256,12 +258,14 @@ public sealed class AuthService(
 
         if (user is null)
         {
+            await DelayOnFailureAsync(cancellationToken);
             return new LoginFailed("Invalid email or password.");
         }
 
         var valid = await userManager.CheckPasswordAsync(user, request.Password);
         if (!valid)
         {
+            await DelayOnFailureAsync(cancellationToken);
             return new LoginFailed("Invalid email or password.");
         }
 
@@ -272,6 +276,7 @@ public sealed class AuthService(
 
         if (user.OrganizationId == Guid.Empty)
         {
+            await DelayOnFailureAsync(cancellationToken);
             return new LoginFailed("User has not been assigned to a workspace.");
         }
 
@@ -282,6 +287,7 @@ public sealed class AuthService(
         }
         catch (InvalidOperationException)
         {
+            await DelayOnFailureAsync(cancellationToken);
             return new LoginFailed("User has not been assigned to a workspace.");
         }
 
