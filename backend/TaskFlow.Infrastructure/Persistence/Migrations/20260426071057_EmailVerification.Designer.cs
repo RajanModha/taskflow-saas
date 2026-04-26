@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TaskFlow.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using TaskFlow.Infrastructure.Persistence;
 namespace TaskFlow.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TaskFlowDbContext))]
-    partial class TaskFlowDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260426071057_EmailVerification")]
+    partial class EmailVerification
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -297,9 +300,6 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
                     b.Property<bool>("EmailVerified")
                         .HasColumnType("boolean");
 
-                    b.Property<DateTime?>("LastResetRequestAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<DateTime?>("LastVerificationResendAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -322,22 +322,6 @@ namespace TaskFlow.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("PasswordHash")
                         .HasColumnType("text");
-
-                    b.Property<DateTime?>("PasswordResetHourStartedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("PasswordResetRequestsThisHour")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("PasswordResetToken")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("PasswordResetTokenExpiry")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("PasswordResetUsed")
-                        .HasColumnType("boolean");
 
                     b.Property<string>("PhoneNumber")
                         .HasColumnType("text");

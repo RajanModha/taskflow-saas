@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>taskflow-api-fdbfa2ab-52dc-4aac-b7b7-9b8ef3228fe1</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

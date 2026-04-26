@@ -98,6 +98,7 @@ public static class IdentityDataSeeder
                 Email = adminEmail,
                 UserName = adminEmail,
                 EmailConfirmed = true,
+                EmailVerified = true,
                 CreatedAtUtc = DateTime.UtcNow,
                 OrganizationId = defaultOrg.Id,
             };
@@ -121,6 +122,12 @@ public static class IdentityDataSeeder
         if (!await userManager.IsInRoleAsync(admin, DomainRoles.User))
         {
             await userManager.AddToRoleAsync(admin, DomainRoles.User);
+        }
+
+        if (!admin.EmailVerified)
+        {
+            admin.EmailVerified = true;
+            await userManager.UpdateAsync(admin);
         }
     }
 
@@ -224,6 +231,7 @@ public static class IdentityDataSeeder
                         Email = email,
                         UserName = email,
                         EmailConfirmed = true,
+                        EmailVerified = true,
                         CreatedAtUtc = now.AddDays(-random.Next(1, 200)),
                         OrganizationId = org.Id,
                     };

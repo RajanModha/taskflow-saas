@@ -4,7 +4,23 @@ public interface IAuthService
 {
     Task<RegisterOutcome> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
 
+    Task<VerifyEmailOutcome> VerifyEmailAsync(VerifyEmailRequest request, CancellationToken cancellationToken = default);
+
+    Task ResendVerificationEmailAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default);
+
     Task<LoginOutcome> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default);
+
+    Task<RefreshSessionOutcome> RefreshSessionAsync(
+        RefreshSessionRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<ForgotPasswordResponse> ForgotPasswordAsync(
+        ForgotPasswordRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<ResetPasswordOutcome> ResetPasswordAsync(
+        ResetPasswordRequest request,
+        CancellationToken cancellationToken = default);
 
     Task<UserProfileResponse?> GetProfileAsync(Guid userId, CancellationToken cancellationToken = default);
 }

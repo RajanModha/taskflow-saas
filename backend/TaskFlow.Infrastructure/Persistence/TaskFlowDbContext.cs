@@ -44,6 +44,9 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.Property(u => u.CreatedAtUtc).IsRequired();
 
             entity.Property(u => u.OrganizationId).IsRequired();
+            entity.Property(u => u.EmailVerificationToken).HasMaxLength(64);
+            entity.Property(u => u.RefreshTokenHash).HasMaxLength(64);
+            entity.Property(u => u.PasswordResetToken).HasMaxLength(64);
             entity.HasOne<Organization>()
                 .WithMany()
                 .HasForeignKey(u => u.OrganizationId)

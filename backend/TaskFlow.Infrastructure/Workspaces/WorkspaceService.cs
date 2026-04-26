@@ -4,16 +4,16 @@ using TaskFlow.Application.Auth;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Domain.Common;
 using TaskFlow.Domain.Entities;
+using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Identity;
 using TaskFlow.Infrastructure.Persistence;
-using TaskFlow.Infrastructure.Auth;
 
 namespace TaskFlow.Infrastructure.Workspaces;
 
 public sealed class WorkspaceService(
     UserManager<ApplicationUser> userManager,
     TaskFlowDbContext dbContext,
-    IJwtTokenGenerator tokenGenerator,
+    IUserSessionIssuer sessionIssuer,
     TimeProvider timeProvider) : IWorkspaceService
 {
     public async Task<WorkspaceOutcome> CreateAsync(
@@ -46,21 +46,20 @@ public sealed class WorkspaceService(
         user.OrganizationId = organization.Id;
         await userManager.UpdateAsync(user);
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        AuthResponse response;
+        try
+        {
+            response = await sessionIssuer.IssueSessionAsync(user, cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            return new WorkspaceFailed(new Dictionary<string, string[]>
+            {
+                { "general", [ "Unable to issue a session for this user." ] }
+            });
+        }
 
-        var roles = await userManager.GetRolesAsync(user);
-        var token = tokenGenerator.CreateAccessToken(
-            user.Id,
-            user.Email ?? string.Empty,
-            roles,
-            organization.Id,
-            now,
-            out var expires);
-
-        return new WorkspaceSucceeded(new AuthResponse(
-            token,
-            new DateTimeOffset(expires, TimeSpan.Zero),
-            "Bearer"));
+        return new WorkspaceSucceeded(response);
     }
 
     public async Task<WorkspaceOutcome> JoinAsync(
@@ -90,29 +89,27 @@ public sealed class WorkspaceService(
             });
         }
 
-        var now = timeProvider.GetUtcNow().UtcDateTime;
         user.OrganizationId = organization.Id;
         await userManager.UpdateAsync(user);
-        await dbContext.SaveChangesAsync(cancellationToken);
 
-        var roles = await userManager.GetRolesAsync(user);
-        var token = tokenGenerator.CreateAccessToken(
-            user.Id,
-            user.Email ?? string.Empty,
-            roles,
-            organization.Id,
-            now,
-            out var expires);
+        AuthResponse response;
+        try
+        {
+            response = await sessionIssuer.IssueSessionAsync(user, cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            return new WorkspaceFailed(new Dictionary<string, string[]>
+            {
+                { "general", [ "Unable to issue a session for this user." ] }
+            });
+        }
 
-        return new WorkspaceSucceeded(new AuthResponse(
-            token,
-            new DateTimeOffset(expires, TimeSpan.Zero),
-            "Bearer"));
+        return new WorkspaceSucceeded(response);
     }
 
     private async Task<string> GenerateUniqueJoinCodeAsync(CancellationToken cancellationToken)
     {
-        // Retry a few times; join codes are short.
         for (var attempt = 0; attempt < 8; attempt++)
         {
             var code = GenerateJoinCode();
@@ -126,7 +123,6 @@ public sealed class WorkspaceService(
             }
         }
 
-        // Fallback (extremely unlikely) - still ensure it exists uniqueness by not checking.
         return GenerateJoinCode();
     }
 
@@ -145,4 +141,3 @@ public sealed class WorkspaceService(
         return new string(chars);
     }
 }
-

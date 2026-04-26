@@ -5,6 +5,7 @@ using Asp.Versioning.ApiExplorer;
 using MediatR;
 using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.OpenApi.Models;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
@@ -15,8 +16,9 @@ using TaskFlow.API.ExceptionHandling;
 using TaskFlow.Application;
 using TaskFlow.Infrastructure;
 using TaskFlow.Infrastructure.Auth;
+using TaskFlow.Infrastructure.Email;
 
-Log.Logger = new LoggerConfiguration()
+Serilog.Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
 
@@ -128,15 +130,39 @@ builder.Services.AddAuthorization();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
+builder.Services.Configure<EmailSettings>(
+    builder.Configuration.GetSection("Email"));
+
+var emailSettings = builder.Configuration.GetSection("Email").Get<EmailSettings>() ?? new EmailSettings();
+if (!builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(emailSettings.ApiKey))
+{
+    throw new InvalidOperationException("Email:ApiKey must be configured in non-development environments.");
+}
+
+builder.Services.AddHttpClient<Resend.ResendClient>();
+builder.Services.Configure<Resend.ResendClientOptions>(options =>
+{
+    options.ApiToken = builder.Configuration["Email:ApiKey"] ?? string.Empty;
+    options.ThrowExceptions = true;
+});
+builder.Services.TryAddTransient<Resend.IResend, Resend.ResendClient>();
+builder.Services.AddScoped<IEmailService, ResendEmailService>();
+
+var allowedCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+if (allowedCorsOrigins is null || allowedCorsOrigins.Length == 0)
+{
+    throw new InvalidOperationException("Cors:AllowedOrigins must contain at least one origin.");
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(
         "Frontend",
         policy =>
         {
-            // Local SPA and Docker-exposed frontend URLs.
+            // Frontend origins are configured via appsettings/environment variables.
             policy
-                .WithOrigins("http://localhost:5173", "https://localhost:5173")
+                .WithOrigins(allowedCorsOrigins)
                 .AllowAnyHeader()
                 .AllowAnyMethod();
         });
@@ -161,7 +187,12 @@ if (app.Environment.IsDevelopment())
 
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
-app.UseHttpsRedirection();
+// Avoid HTTP->HTTPS redirects in local dev: browser preflight (OPTIONS) requests
+// fail CORS when redirected.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("Frontend");
 app.UseAuthentication();
 // Tenant guard runs after auth so claim-based org resolution is available.
@@ -175,5 +206,5 @@ try
 }
 finally
 {
-    Log.CloseAndFlush();
+    Serilog.Log.CloseAndFlush();
 }

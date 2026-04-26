@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using TaskFlow.Application.Auth;
 using Asp.Versioning;
 
@@ -11,17 +12,107 @@ namespace TaskFlow.API.Controllers;
 [Route("api/[controller]")]
 public sealed class AuthController(IAuthService authService) : ControllerBase
 {
-    /// <summary>Register a new user (assigned the User role).</summary>
+    /// <summary>Register a new user (assigned the User role). Sends a verification email; no JWT until verified.</summary>
     [HttpPost("register")]
-    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(RegisterPendingResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
         var outcome = await authService.RegisterAsync(request, cancellationToken);
         return outcome switch
         {
-            RegisterSucceeded s => CreatedAtAction(nameof(Me), new { }, s.Response),
+            RegisterPendingEmailVerification p => CreatedAtAction(
+                nameof(Me),
+                new { },
+                new RegisterPendingResponse(p.Message)),
             RegisterFailed f => ValidationRegistrationErrors(f.Errors),
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
+        };
+    }
+
+    /// <summary>Confirm email using the token from the verification link.</summary>
+    [HttpPost("verify-email")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request, CancellationToken cancellationToken)
+    {
+        var outcome = await authService.VerifyEmailAsync(request, cancellationToken);
+        return outcome switch
+        {
+            VerifyEmailSucceeded s => Ok(s.Response),
+            VerifyEmailFailed f => Problem(title: f.Title, detail: f.Detail, statusCode: f.StatusCode),
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
+        };
+    }
+
+    /// <summary>Resend the verification email (rate-limited; always returns 200).</summary>
+    [HttpPost("resend-verification")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ResendVerification(
+        [FromBody] ResendVerificationRequest request,
+        CancellationToken cancellationToken)
+    {
+        await authService.ResendVerificationEmailAsync(request, cancellationToken);
+        return Ok();
+    }
+
+    /// <summary>Request a password reset link (always returns 200 for enumeration safety).</summary>
+    [AllowAnonymous]
+    [HttpPost("forgot-password")]
+    [ProducesResponseType(typeof(ForgotPasswordResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ForgotPassword(
+        [FromBody] ForgotPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var response = await authService.ForgotPasswordAsync(request, cancellationToken);
+        return Ok(response);
+    }
+
+    /// <summary>Complete password reset using the token from the email link.</summary>
+    [AllowAnonymous]
+    [HttpPost("reset-password")]
+    [ProducesResponseType(typeof(ResetPasswordResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword(
+        [FromBody] ResetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
+
+        var outcome = await authService.ResetPasswordAsync(request, cancellationToken);
+        return outcome switch
+        {
+            ResetPasswordSucceeded s => Ok(new ResetPasswordResponse(s.Message)),
+            ResetPasswordInvalidOrExpired => Problem(
+                title: "Password reset failed",
+                detail: "This reset link is invalid or has expired.",
+                statusCode: StatusCodes.Status400BadRequest),
+            ResetPasswordSameAsCurrent => SamePasswordValidationProblem(),
+            ResetPasswordPasswordPolicyFailed f => PasswordPolicyValidationProblem(f.Errors),
+            ResetPasswordServerError => Problem(
+                title: "Password reset failed",
+                detail: "Unable to complete password reset. Please try again or request a new reset link.",
+                statusCode: StatusCodes.Status400BadRequest),
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
+        };
+    }
+
+    /// <summary>Exchange a valid refresh token for a new access token and refresh token (rotation).</summary>
+    [AllowAnonymous]
+    [HttpPost("refresh")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Refresh([FromBody] RefreshSessionRequest request, CancellationToken cancellationToken)
+    {
+        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
+
+        var outcome = await authService.RefreshSessionAsync(request, cancellationToken);
+        return outcome switch
+        {
+            RefreshSessionSucceeded s => Ok(s.Response),
+            RefreshSessionFailed f => Problem(title: f.Title, detail: f.Detail, statusCode: f.StatusCode),
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
         };
     }
@@ -30,12 +121,19 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     [HttpPost("login")]
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
+        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
+
         var outcome = await authService.LoginAsync(request, cancellationToken);
         return outcome switch
         {
             LoginSucceeded s => Ok(s.Response),
+            LoginEmailNotVerified => Problem(
+                title: "Email not verified",
+                detail: "Please check your inbox and verify your email.",
+                statusCode: StatusCodes.Status403Forbidden),
             LoginFailed f => Problem(
                 title: "Login failed",
                 detail: f.Error,
@@ -61,6 +159,29 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
 
         var profile = await authService.GetProfileAsync(id, cancellationToken);
         return profile is null ? NotFound() : Ok(profile);
+    }
+
+    private ActionResult PasswordPolicyValidationProblem(IReadOnlyDictionary<string, string[]> errors)
+    {
+        var modelState = new ModelStateDictionary();
+        foreach (var kvp in errors)
+        {
+            foreach (var message in kvp.Value)
+            {
+                modelState.AddModelError(kvp.Key, message);
+            }
+        }
+
+        return ValidationProblem(modelState);
+    }
+
+    private ActionResult SamePasswordValidationProblem()
+    {
+        var modelState = new ModelStateDictionary();
+        modelState.AddModelError(
+            nameof(ResetPasswordRequest.NewPassword),
+            "Your new password must be different from your current password.");
+        return ValidationProblem(modelState);
     }
 
     private ActionResult ValidationRegistrationErrors(IReadOnlyDictionary<string, string[]> errors)
