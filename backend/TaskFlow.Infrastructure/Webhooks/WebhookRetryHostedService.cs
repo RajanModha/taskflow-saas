@@ -9,6 +9,7 @@ using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Webhooks;
 
+/// <summary>Processes pending webhook deliveries (outbox + scheduled retries) outside the API request path.</summary>
 public sealed class WebhookRetryHostedService(
     IServiceScopeFactory scopeFactory,
     ILogger<WebhookRetryHostedService> logger,
@@ -56,7 +57,7 @@ public sealed class WebhookRetryHostedService(
 
             try
             {
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

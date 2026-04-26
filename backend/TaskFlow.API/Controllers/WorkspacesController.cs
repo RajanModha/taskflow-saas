@@ -442,6 +442,7 @@ public sealed class WorkspacesController(
     [Authorize(Policy = "AdminPolicy")]
     [ProducesResponseType(typeof(WebhookTestResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> TestWebhook(Guid webhookId, CancellationToken cancellationToken)
     {
         var userId = TryGetUserId();

@@ -52,7 +52,7 @@ public sealed class WorkspaceWebhookService(
             return (StatusCodes.Status404NotFound, new { message = "Workspace not found." });
         }
 
-        var urlError = ValidateHttpsUrl(request.Url);
+        var urlError = WebhookUrlValidator.Validate(request.Url);
         if (urlError is not null)
         {
             return (StatusCodes.Status400BadRequest, new { message = urlError });
@@ -122,7 +122,7 @@ public sealed class WorkspaceWebhookService(
 
         if (request.Url is not null)
         {
-            var urlError = ValidateHttpsUrl(request.Url);
+            var urlError = WebhookUrlValidator.Validate(request.Url);
             if (urlError is not null)
             {
                 return (StatusCodes.Status400BadRequest, new { message = urlError });
@@ -240,31 +240,23 @@ public sealed class WorkspaceWebhookService(
             return (StatusCodes.Status404NotFound, new { message = "Workspace not found." });
         }
 
-        var exists = await dbContext.Webhooks
+        var webhook = await dbContext.Webhooks
             .AsNoTracking()
-            .AnyAsync(w => w.Id == webhookId && w.OrganizationId == actor.OrganizationId, cancellationToken);
-        if (!exists)
+            .FirstOrDefaultAsync(w => w.Id == webhookId && w.OrganizationId == actor.OrganizationId, cancellationToken);
+        if (webhook is null)
         {
             return (StatusCodes.Status404NotFound, new { message = "Webhook not found." });
         }
 
+        if (!webhook.IsActive)
+        {
+            return (
+                StatusCodes.Status409Conflict,
+                new { message = "Webhook is inactive. Set isActive to true before sending a test delivery." });
+        }
+
         var (delivered, status) = await webhookDispatcher.SendTestAsync(actor.OrganizationId, webhookId, cancellationToken);
         return (StatusCodes.Status200OK, new WebhookTestResponse(delivered, status));
-    }
-
-    private static string? ValidateHttpsUrl(string url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return "Url is required.";
-        }
-
-        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-        {
-            return "Url must be a valid HTTPS URL.";
-        }
-
-        return null;
     }
 
     private static string? ValidateEventList(IReadOnlyList<string> events, bool requireAny)

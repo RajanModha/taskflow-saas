@@ -142,13 +142,14 @@ public sealed class CreateTaskHandler(
                 cancellationToken);
         }
 
+        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [task], cancellationToken);
+
         await webhookDispatcher.DispatchOrganizationEventAsync(
             currentTenant.OrganizationId,
             WebhookEventTypes.TaskCreated,
             new { taskId = task.Id, projectId = task.ProjectId, title = task.Title },
             cancellationToken);
 
-        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [task], cancellationToken);
         return dtoList[0];
     }
 }

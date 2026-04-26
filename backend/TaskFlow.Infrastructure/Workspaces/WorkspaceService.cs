@@ -131,17 +131,6 @@ public sealed class WorkspaceService(
                 ct: cancellationToken);
         }
 
-        await webhookDispatcher.DispatchOrganizationEventAsync(
-            organization.Id,
-            WebhookEventTypes.MemberJoined,
-            new
-            {
-                userId = user.Id,
-                displayName = user.DisplayName,
-                userName = user.UserName,
-            },
-            cancellationToken);
-
         AuthResponse response;
         try
         {
@@ -154,6 +143,17 @@ public sealed class WorkspaceService(
                 { "general", [ "Unable to issue a session for this user." ] }
             });
         }
+
+        await webhookDispatcher.DispatchOrganizationEventAsync(
+            organization.Id,
+            WebhookEventTypes.MemberJoined,
+            new
+            {
+                userId = user.Id,
+                displayName = user.DisplayName,
+                userName = user.UserName,
+            },
+            cancellationToken);
 
         return new WorkspaceSucceeded(response);
     }

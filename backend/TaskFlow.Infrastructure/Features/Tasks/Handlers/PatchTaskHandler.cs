@@ -88,6 +88,9 @@ public sealed class PatchTaskHandler(
             task.AssigneeId);
         boardCacheVersion.BumpProject(task.ProjectId);
 
+        var refreshed = await dbContext.Tasks.AsNoTracking().FirstAsync(t => t.Id == task.Id, cancellationToken);
+        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [refreshed], cancellationToken);
+
         if (request.HasStatus && request.Status is DomainTaskStatus newStatus && previousStatus != newStatus)
         {
             await webhookDispatcher.DispatchOrganizationEventAsync(
@@ -114,8 +117,6 @@ public sealed class PatchTaskHandler(
                 cancellationToken);
         }
 
-        var refreshed = await dbContext.Tasks.AsNoTracking().FirstAsync(t => t.Id == task.Id, cancellationToken);
-        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [refreshed], cancellationToken);
         return dtoList[0];
     }
 }

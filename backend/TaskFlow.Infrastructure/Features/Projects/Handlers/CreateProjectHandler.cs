@@ -65,13 +65,15 @@ public sealed class CreateProjectHandler(
                 cancellationToken);
         }
 
+        var dto = mapper.Map<ProjectDto>(project);
+
         await webhookDispatcher.DispatchOrganizationEventAsync(
             currentTenant.OrganizationId,
             WebhookEventTypes.ProjectCreated,
             new { projectId = project.Id, name = project.Name },
             cancellationToken);
 
-        return mapper.Map<ProjectDto>(project);
+        return dto;
     }
 }
 

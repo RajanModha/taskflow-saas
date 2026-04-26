@@ -44,11 +44,11 @@ public sealed class WebhookDispatcher(
         }
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var deliveryIds = new List<Guid>();
+        var occurredAt = timeProvider.GetUtcNow();
         foreach (var wh in targets)
         {
             var deliveryId = Guid.NewGuid();
-            var envelope = new WebhookEnvelope(deliveryId, eventType, now, organizationId, data);
+            var envelope = new WebhookEnvelope(deliveryId, eventType, occurredAt, organizationId, data);
             var json = JsonSerializer.Serialize(envelope, JsonOptions);
             var delivery = new WebhookDelivery
             {
@@ -61,15 +61,9 @@ public sealed class WebhookDispatcher(
                 CreatedAtUtc = now,
             };
             await dbContext.WebhookDeliveries.AddAsync(delivery, cancellationToken);
-            deliveryIds.Add(deliveryId);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
-
-        foreach (var id in deliveryIds)
-        {
-            await DispatchDeliveryAsync(id, cancellationToken);
-        }
     }
 
     public async Task DispatchDeliveryAsync(Guid deliveryId, CancellationToken cancellationToken = default)
@@ -99,6 +93,16 @@ public sealed class WebhookDispatcher(
             || (delivery.NextRetryAt is not null && delivery.NextRetryAt <= now);
         if (!eligible)
         {
+            return;
+        }
+
+        if (WebhookUrlValidator.Validate(delivery.Webhook.Url) is { } urlError)
+        {
+            delivery.Status = WebhookDeliveryStatuses.Failed;
+            delivery.LastAttemptAt = timeProvider.GetUtcNow().UtcDateTime;
+            delivery.ResponseBody = urlError;
+            delivery.ResponseStatus = null;
+            await dbContext.SaveChangesAsync(cancellationToken);
             return;
         }
 
@@ -133,30 +137,27 @@ public sealed class WebhookDispatcher(
         request.Content = new StringContent(jsonPayload, Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
         request.Headers.TryAddWithoutValidation("X-TaskFlow-Signature", signatureHeader);
 
-        HttpResponseMessage? response = null;
         try
         {
-            response = await client.SendAsync(request, cancellationToken);
+            using var response = await client.SendAsync(request, cancellationToken);
+            var body = await ReadResponseBodyAsync(response, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                delivery.Status = WebhookDeliveryStatuses.Success;
+                delivery.ResponseStatus = (int)response.StatusCode;
+                delivery.ResponseBody = body;
+                delivery.NextRetryAt = null;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                return;
+            }
+
+            await RecordFailureAsync(delivery, response, (int)response.StatusCode, body, cancellationToken);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Webhook delivery {DeliveryId} HTTP request failed.", deliveryId);
-            await RecordFailureAsync(delivery, response, null, ex.Message, cancellationToken);
-            return;
+            await RecordFailureAsync(delivery, null, null, ex.Message, cancellationToken);
         }
-
-        var body = await ReadResponseBodyAsync(response, cancellationToken);
-        if (response.IsSuccessStatusCode)
-        {
-            delivery.Status = WebhookDeliveryStatuses.Success;
-            delivery.ResponseStatus = (int)response.StatusCode;
-            delivery.ResponseBody = body;
-            delivery.NextRetryAt = null;
-            await dbContext.SaveChangesAsync(cancellationToken);
-            return;
-        }
-
-        await RecordFailureAsync(delivery, response, (int)response.StatusCode, body, cancellationToken);
     }
 
     public async Task<(bool Delivered, int? ResponseStatus)> SendTestAsync(
@@ -176,11 +177,16 @@ public sealed class WebhookDispatcher(
             return (false, null);
         }
 
-        var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (WebhookUrlValidator.Validate(webhook.Url) is not null)
+        {
+            return (false, null);
+        }
+
+        var occurredAt = timeProvider.GetUtcNow();
         var envelope = new WebhookEnvelope(
             Guid.NewGuid(),
             WebhookEventTypes.WebhookTest,
-            now,
+            occurredAt,
             organizationId,
             new { message = "Test delivery" });
         var json = JsonSerializer.Serialize(envelope, JsonOptions);
@@ -205,7 +211,7 @@ public sealed class WebhookDispatcher(
 
         try
         {
-            var response = await client.SendAsync(request, cancellationToken);
+            using var response = await client.SendAsync(request, cancellationToken);
             var delivered = response.IsSuccessStatusCode;
             return (delivered, (int)response.StatusCode);
         }
