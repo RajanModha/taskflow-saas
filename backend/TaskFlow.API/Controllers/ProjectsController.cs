@@ -2,6 +2,8 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Asp.Versioning;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Text.Json;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Projects;
@@ -16,6 +18,7 @@ namespace TaskFlow.API.Controllers;
 public sealed class ProjectsController(IMediator mediator) : ControllerBase
 {
     public sealed record UpdateProjectRequest(string Name, string? Description);
+    public sealed record ExportLimitResponse(string Detail);
 
     public sealed record MoveBoardTaskRequest(TaskStatus NewStatus);
 
@@ -47,6 +50,34 @@ public sealed class ProjectsController(IMediator mediator) : ControllerBase
     {
         var result = await mediator.Send(new GetProjectByIdQuery(projectId), cancellationToken);
         return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpGet("{projectId:guid}/export")]
+    [EnableRateLimiting("export")]
+    [Produces("application/json")]
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ExportLimitResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Export(
+        [FromRoute] Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await mediator.Send(new GetProjectExportQuery(projectId), cancellationToken);
+        if (response.TaskLimitExceeded)
+        {
+            return BadRequest(new ExportLimitResponse("Narrow your filters. Max 10,000 rows."));
+        }
+        if (response.ProjectNotFound || response.Payload is null)
+        {
+            return NotFound();
+        }
+
+        var safeProjectName = BuildSafeFileNameSegment(response.Payload.Project.Name);
+        Response.ContentType = "application/json";
+        Response.Headers.ContentDisposition =
+            $"attachment; filename=project-{safeProjectName}-{DateTime.UtcNow:yyyyMMdd}.json";
+        await JsonSerializer.SerializeAsync(Response.Body, response.Payload, cancellationToken: cancellationToken);
+        return new EmptyResult();
     }
 
     [HttpGet("{projectId:guid}/activity")]
@@ -139,6 +170,13 @@ public sealed class ProjectsController(IMediator mediator) : ControllerBase
     {
         var restored = await mediator.Send(new RestoreProjectCommand(projectId), cancellationToken);
         return restored is null ? NotFound() : Ok(restored);
+    }
+
+    private static string BuildSafeFileNameSegment(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(value.Trim().Select(c => invalid.Contains(c) ? '-' : c).ToArray());
+        return string.IsNullOrWhiteSpace(cleaned) ? "project" : cleaned;
     }
 }
 

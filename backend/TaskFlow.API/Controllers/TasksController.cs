@@ -1,5 +1,8 @@
-using MediatR;
+using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using CsvHelper;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Asp.Versioning;
@@ -11,6 +14,7 @@ using TaskFlow.Application.Tasks;
 using TaskFlow.Application.Workspaces;
 using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 using TaskPriority = TaskFlow.Domain.Entities.TaskPriority;
+using DomainTask = TaskFlow.Domain.Entities.Task;
 
 namespace TaskFlow.API.Controllers;
 
@@ -18,7 +22,7 @@ namespace TaskFlow.API.Controllers;
 [ApiVersion("1.0")]
 [Authorize]
 [Route("api/[controller]")]
-public sealed class TasksController(IMediator mediator) : ControllerBase
+public sealed class TasksController(IMediator mediator, ITaskRepository taskRepository) : ControllerBase
 {
     public sealed record UpdateTaskRequest(
         string Title,
@@ -38,6 +42,7 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
     public sealed record ReorderChecklistRequest(Guid[] OrderedIds);
     public sealed record BulkDeleteRequest(Guid[] TaskIds);
     public sealed record BulkAssignRequest(Guid[] TaskIds, Guid? AssigneeId);
+    public sealed record ExportLimitResponse(string Detail);
 
     [HttpGet]
     [ProducesResponseType(typeof(PagedResultDto<TaskDto>), StatusCodes.Status200OK)]
@@ -108,6 +113,104 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
             cancellationToken);
 
         return Ok(result);
+    }
+
+    [HttpGet("export")]
+    [EnableRateLimiting("export")]
+    [Produces("text/csv", "application/json")]
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ExportLimitResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Export(
+        [FromQuery] Guid? projectId = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? priority = null,
+        [FromQuery] DateTime? dueFromUtc = null,
+        [FromQuery] DateTime? dueToUtc = null,
+        [FromQuery] string? q = null,
+        [FromQuery] bool? assignedToMe = null,
+        [FromQuery] Guid? assigneeId = null,
+        [FromQuery] Guid? tagId = null,
+        [FromQuery] string format = "csv",
+        CancellationToken cancellationToken = default)
+    {
+        TaskStatus? statusEnum = null;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (!Enum.TryParse<TaskStatus>(status, ignoreCase: true, out var parsed))
+            {
+                ModelState.AddModelError(nameof(status), "Invalid status.");
+                return ValidationProblem(ModelState);
+            }
+
+            statusEnum = parsed;
+        }
+
+        TaskPriority? priorityEnum = null;
+        if (!string.IsNullOrWhiteSpace(priority))
+        {
+            if (!Enum.TryParse<TaskPriority>(priority, ignoreCase: true, out var parsed))
+            {
+                ModelState.AddModelError(nameof(priority), "Invalid priority.");
+                return ValidationProblem(ModelState);
+            }
+
+            priorityEnum = parsed;
+        }
+
+        var filters = new TaskExportFilters(
+            projectId,
+            statusEnum,
+            priorityEnum,
+            dueFromUtc,
+            dueToUtc,
+            q,
+            null,
+            true,
+            assignedToMe,
+            assigneeId,
+            tagId,
+            IncludeDeleted: false);
+
+        var total = await taskRepository.GetExportCountAsync(filters, cancellationToken);
+        if (total > 10_000)
+        {
+            return BadRequest(new ExportLimitResponse("Narrow your filters. Max 10,000 rows."));
+        }
+        var assigneeNames = await taskRepository.GetExportAssigneeDisplayNamesAsync(filters, cancellationToken);
+
+        var exportFormat = string.IsNullOrWhiteSpace(format) ? "csv" : format.Trim().ToLowerInvariant();
+        switch (exportFormat)
+        {
+            case "csv":
+                Response.ContentType = "text/csv";
+                Response.Headers.ContentDisposition = $"attachment; filename=tasks-{DateTime.UtcNow:yyyyMMdd}.csv";
+                await using (var writer = new StreamWriter(Response.Body))
+                await using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
+                {
+                    csv.WriteHeader<TaskExportRow>();
+                    await csv.NextRecordAsync();
+                    await foreach (var task in taskRepository.GetExportStreamAsync(filters, cancellationToken))
+                    {
+                        csv.WriteRecord(MapToExportRow(task, assigneeNames));
+                        await csv.NextRecordAsync();
+                    }
+                }
+
+                return new EmptyResult();
+
+            case "json":
+                Response.ContentType = "application/json";
+                Response.Headers.ContentDisposition = $"attachment; filename=tasks-{DateTime.UtcNow:yyyyMMdd}.json";
+                await JsonSerializer.SerializeAsync(
+                    Response.Body,
+                    StreamExportRows(filters, assigneeNames, cancellationToken),
+                    cancellationToken: cancellationToken);
+                return new EmptyResult();
+
+            default:
+                ModelState.AddModelError(nameof(format), "Invalid format. Use csv or json.");
+                return ValidationProblem(ModelState);
+        }
     }
 
     [HttpGet("overdue")]
@@ -660,6 +763,44 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
     {
         var deleted = await mediator.Send(new PermanentDeleteTaskCommand(taskId), cancellationToken);
         return deleted ? NoContent() : NotFound();
+    }
+
+    private async IAsyncEnumerable<TaskExportRow> StreamExportRows(
+        TaskExportFilters filters,
+        IReadOnlyDictionary<Guid, string> assigneeNames,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var task in taskRepository.GetExportStreamAsync(filters, cancellationToken))
+        {
+            yield return MapToExportRow(task, assigneeNames);
+        }
+    }
+
+    private static TaskExportRow MapToExportRow(DomainTask task, IReadOnlyDictionary<Guid, string> assigneeNames)
+    {
+        string? assigneeName = null;
+        if (task.AssigneeId is { } assigneeId && assigneeNames.TryGetValue(assigneeId, out var name))
+        {
+            assigneeName = name;
+        }
+        var tags = task.TaskTags
+            .Select(tt => tt.Tag.Name)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
+
+        return new TaskExportRow
+        {
+            Id = task.Id,
+            Title = task.Title,
+            Description = task.Description,
+            Status = task.Status.ToString(),
+            Priority = task.Priority.ToString(),
+            ProjectName = task.Project?.Name ?? string.Empty,
+            AssigneeName = assigneeName,
+            Tags = string.Join(", ", tags),
+            DueDateUtc = task.DueDateUtc,
+            CreatedAtUtc = task.CreatedAtUtc,
+            UpdatedAtUtc = task.UpdatedAtUtc,
+        };
     }
 
     private bool IsAdminPlus()
