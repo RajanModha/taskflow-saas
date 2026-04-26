@@ -11,10 +11,11 @@ using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Manage projects, board views, exports, and related activity.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Authorize]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class ProjectsController(IMediator mediator) : ControllerBase
 {
     public sealed record UpdateProjectRequest(string Name, string? Description);

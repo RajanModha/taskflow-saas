@@ -7,10 +7,11 @@ using TaskFlow.Application.Search;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Run workspace-wide search across supported entities.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Authorize]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class SearchController(IMediator mediator) : ControllerBase
 {
     /// <summary>Workspace-wide read-only search across tasks, projects, and comments.</summary>

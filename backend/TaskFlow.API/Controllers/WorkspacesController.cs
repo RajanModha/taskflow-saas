@@ -9,10 +9,11 @@ using Asp.Versioning;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Manage workspace profile, members, and tags.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Authorize]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class WorkspacesController(
     IWorkspaceService workspaceService,
     IWorkspaceManagementService workspaceManagement,

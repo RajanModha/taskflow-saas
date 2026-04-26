@@ -8,10 +8,11 @@ using Asp.Versioning;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Provide dashboard analytics for the current workspace and user.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Authorize]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class DashboardController(IMediator mediator) : ControllerBase
 {
     [HttpGet("stats")]

@@ -8,9 +8,10 @@ using Asp.Versioning;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Authenticate and manage user sessions with JWT and refresh tokens.</summary>
 [ApiController]
 [ApiVersion("1.0")]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class AuthController(IAuthService authService) : ControllerBase
 {
     /// <summary>Register a new user (assigned the User role). Sends a verification email; no JWT until verified.</summary>
@@ -197,7 +198,11 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         return revoked ? NoContent() : NotFound();
     }
 
-    /// <summary>Authenticate and receive a JWT bearer token.</summary>
+    /// <summary>Authenticate and receive JWT tokens.</summary>
+    /// <remarks>Returns access token (15 min) and refresh token (30 days).</remarks>
+    /// <response code="200">Login successful. Returns auth tokens.</response>
+    /// <response code="401">Invalid credentials.</response>
+    /// <response code="403">Email not verified.</response>
     [HttpPost("login")]
     [EnableRateLimiting("auth")]
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]

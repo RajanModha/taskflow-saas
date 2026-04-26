@@ -7,10 +7,11 @@ using TaskFlow.Application.Notifications;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Manage in-app notifications for the authenticated user.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Authorize]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class NotificationsController(IMediator mediator) : ControllerBase
 {
     public sealed record UnreadCountResponse(int Count);

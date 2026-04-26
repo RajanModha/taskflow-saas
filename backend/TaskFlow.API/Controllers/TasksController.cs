@@ -18,10 +18,11 @@ using DomainTask = TaskFlow.Domain.Entities.Task;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Manage tasks, comments, checklists, bulk operations, and exports.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Authorize]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class TasksController(IMediator mediator, ITaskRepository taskRepository) : ControllerBase
 {
     public sealed record UpdateTaskRequest(

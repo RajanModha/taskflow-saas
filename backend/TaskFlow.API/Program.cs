@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Reflection;
 using System.Text;
 using Asp.Versioning;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -184,58 +185,65 @@ builder.Services.AddFluentValidationClientsideAdapters();
 
 builder.Services.AddApiVersioning(options =>
 {
-    // Keep v1 as the safe default while allowing opt-in version headers/query.
-    options.DefaultApiVersion = new ApiVersion(1, 0);
+    options.DefaultApiVersion = new ApiVersion(1);
     options.AssumeDefaultVersionWhenUnspecified = true;
     options.ReportApiVersions = true;
     options.ApiVersionReader = ApiVersionReader.Combine(
+        new UrlSegmentApiVersionReader(),
         new QueryStringApiVersionReader("api-version"),
         new HeaderApiVersionReader("x-api-version"));
 })
     .AddApiExplorer(options =>
     {
         options.GroupNameFormat = "'v'VVV";
-        options.SubstituteApiVersionInUrl = false;
+        options.SubstituteApiVersionInUrl = true;
     });
 
-builder.Services.AddSwaggerGen(options =>
+builder.Services.AddSwaggerGen(c =>
 {
-    options.ExampleFilters();
-
-    options.AddSecurityDefinition(
-        "Bearer",
-        new OpenApiSecurityScheme
+    c.ExampleFilters();
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "TaskFlow API",
+        Version = "v1",
+        Description = """
+            TaskFlow is a multi-tenant project and task management API.
+            
+            **Authentication**: Use Bearer JWT. Register -> verify email -> login -> use token.
+            
+            **Versioning**: URL segment (/api/v1/), query string (?api-version=1.0),
+            or header (x-api-version: 1.0).
+            
+            **Rate Limits**: Auth endpoints 10 req/min. API 200 req/min per user.
+            
+            Built with .NET 8, EF Core, Resend email.
+            """,
+        Contact = new OpenApiContact { Name = "Your Name", Url = new Uri("https://github.com/yourusername") },
+        License = new OpenApiLicense { Name = "MIT" },
+    });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "Enter your JWT token. Get it from POST /api/v1/Auth/login",
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
         {
-            Name = "Authorization",
-            In = ParameterLocation.Header,
-            Type = SecuritySchemeType.Http,
-            Scheme = "bearer",
-            BearerFormat = "JWT",
-            Description = "Enter JWT token as: Bearer {token}",
-        });
-
-    options.AddSecurityRequirement(
-        new OpenApiSecurityRequirement
-        {
+            new OpenApiSecurityScheme
             {
-                new OpenApiSecurityScheme
-                {
-                    Reference = new OpenApiReference
-                    {
-                        Type = ReferenceType.SecurityScheme,
-                        Id = "Bearer",
-                    },
-                },
-                Array.Empty<string>()
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" },
             },
-        });
+            Array.Empty<string>()
+        },
+    });
+    c.IncludeXmlComments(Path.Combine(
+        AppContext.BaseDirectory,
+        $"{Assembly.GetExecutingAssembly().GetName().Name}.xml"));
 });
 
 builder.Services.AddSwaggerExamplesFromAssemblyOf<TaskFlow.API.Swagger.DashboardStatsExampleProvider>();
-
-builder.Services.AddTransient<
-    Microsoft.Extensions.Options.IConfigureOptions<Swashbuckle.AspNetCore.SwaggerGen.SwaggerGenOptions>,
-    TaskFlow.API.Swagger.ConfigureSwaggerOptions>();
 
 var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
                   ?? throw new InvalidOperationException($"Configuration section '{JwtSettings.SectionName}' is required.");
@@ -349,13 +357,13 @@ await app.InitializeAsync();
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI(options =>
+    app.UseSwaggerUI(c =>
     {
-        var provider = app.Services.GetRequiredService<IApiVersionDescriptionProvider>();
-        foreach (var description in provider.ApiVersionDescriptions)
-        {
-            options.SwaggerEndpoint($"/swagger/{description.GroupName}/swagger.json", description.GroupName.ToUpperInvariant());
-        }
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "TaskFlow API v1");
+        c.DocumentTitle = "TaskFlow API Docs";
+        c.DisplayRequestDuration();
+        c.EnableFilter();
+        c.EnableDeepLinking();
     });
 }
 

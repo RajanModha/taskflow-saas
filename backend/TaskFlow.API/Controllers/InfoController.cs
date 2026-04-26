@@ -4,9 +4,10 @@ using Asp.Versioning;
 
 namespace TaskFlow.API.Controllers;
 
+/// <summary>Expose public API/service metadata.</summary>
 [ApiController]
 [ApiVersion("1.0")]
-[Route("api/[controller]")]
+[Route("api/v{version:apiVersion}/[controller]")]
 public sealed class InfoController(IAppInfo appInfo) : ControllerBase
 {
     [HttpGet]
