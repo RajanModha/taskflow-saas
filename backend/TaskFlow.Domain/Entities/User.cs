@@ -11,4 +11,5 @@ public sealed class User
     public DateTime CreatedAtUtc { get; init; }
     public IReadOnlyList<string> Roles { get; init; } = [];
     public Guid OrganizationId { get; init; }
+    public WorkspaceRole WorkspaceRole { get; init; }
 }

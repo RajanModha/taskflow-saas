@@ -46,6 +46,8 @@ public sealed class WorkspaceService(
         await dbContext.Organizations.AddAsync(organization, cancellationToken);
 
         user.OrganizationId = organization.Id;
+        user.WorkspaceRole = WorkspaceRole.Owner;
+        user.WorkspaceJoinedAtUtc = now;
         await userManager.UpdateAsync(user);
 
         AuthResponse response;
@@ -91,7 +93,10 @@ public sealed class WorkspaceService(
             });
         }
 
+        var joinedAt = timeProvider.GetUtcNow().UtcDateTime;
         user.OrganizationId = organization.Id;
+        user.WorkspaceRole = WorkspaceRole.Member;
+        user.WorkspaceJoinedAtUtc = joinedAt;
         await userManager.UpdateAsync(user);
 
         AuthResponse response;
@@ -132,7 +137,7 @@ public sealed class WorkspaceService(
     {
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            var code = GenerateJoinCode();
+            var code = WorkspaceJoinCodes.Generate();
             var exists = await dbContext.Organizations.AnyAsync(
                 o => o.JoinCode == code,
                 cancellationToken);
@@ -143,21 +148,6 @@ public sealed class WorkspaceService(
             }
         }
 
-        return GenerateJoinCode();
-    }
-
-    private static string GenerateJoinCode()
-    {
-        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        var bytes = new byte[8];
-        Random.Shared.NextBytes(bytes);
-        var chars = new char[8];
-
-        for (var i = 0; i < 8; i++)
-        {
-            chars[i] = alphabet[bytes[i] % alphabet.Length];
-        }
-
-        return new string(chars);
+        return WorkspaceJoinCodes.Generate();
     }
 }

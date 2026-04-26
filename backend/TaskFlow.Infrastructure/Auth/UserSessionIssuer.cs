@@ -51,6 +51,7 @@ public sealed class UserSessionIssuer(
             user.Email ?? string.Empty,
             roles,
             user.OrganizationId,
+            user.WorkspaceRole,
             now,
             out var expiresUtc);
 

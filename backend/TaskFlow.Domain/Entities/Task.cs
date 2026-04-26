@@ -6,6 +6,7 @@ public enum TaskStatus
     Todo = 1,
     InProgress = 2,
     Done = 3,
+    Cancelled = 4,
 }
 
 public enum TaskPriority
@@ -33,7 +34,17 @@ public sealed class Task
     public DateTime CreatedAtUtc { get; init; }
     public DateTime UpdatedAtUtc { get; set; }
 
+    public Guid? AssigneeId { get; set; }
+
+    public bool ReminderSent { get; set; }
+
     // Navigation optional; EF can manage with FK if needed.
     public Project? Project { get; set; }
+
+    public ICollection<Comment> Comments { get; set; } = new List<Comment>();
+
+    public ICollection<TaskTag> TaskTags { get; set; } = new List<TaskTag>();
+
+    public ICollection<ChecklistItem> ChecklistItems { get; set; } = new List<ChecklistItem>();
 }
 

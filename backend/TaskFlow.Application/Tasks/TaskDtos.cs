@@ -14,7 +14,30 @@ public sealed record TaskDto(
     DomainTaskPriority Priority,
     DateTime? DueDateUtc,
     DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc);
+    DateTime UpdatedAtUtc,
+    TaskAssigneeDto? Assignee,
+    int CommentCount,
+    IReadOnlyList<TagDto> Tags,
+    int ChecklistTotal,
+    int ChecklistCompleted,
+    decimal ChecklistProgress);
+
+public sealed record ChecklistItemDto(
+    Guid Id,
+    string Title,
+    bool IsCompleted,
+    int Order,
+    DateTime? CompletedAt);
+
+public sealed record GetTaskChecklistQuery(Guid TaskId) : IRequest<IReadOnlyList<ChecklistItemDto>?>;
+
+public sealed record AddChecklistItemCommand(Guid TaskId, string Title, int? InsertAfterOrder) : IRequest<ChecklistItemDto?>;
+
+public sealed record UpdateChecklistItemCommand(Guid TaskId, Guid ItemId, string? Title, bool? IsCompleted) : IRequest<ChecklistItemDto?>;
+
+public sealed record DeleteChecklistItemCommand(Guid TaskId, Guid ItemId) : IRequest<bool>;
+
+public sealed record ReorderChecklistCommand(Guid TaskId, Guid[] OrderedIds) : IRequest<IReadOnlyList<ChecklistItemDto>?>;
 
 public sealed record CreateTaskCommand(
     Guid ProjectId,
@@ -22,7 +45,9 @@ public sealed record CreateTaskCommand(
     string? Description,
     DomainTaskStatus Status,
     DomainTaskPriority Priority,
-    DateTime? DueDateUtc) : IRequest<TaskDto?>;
+    DateTime? DueDateUtc,
+    Guid? AssigneeId = null,
+    Guid[]? TagIds = null) : IRequest<TaskDto?>;
 
 public sealed record UpdateTaskCommand(
     Guid TaskId,
@@ -30,7 +55,9 @@ public sealed record UpdateTaskCommand(
     string? Description,
     DomainTaskStatus Status,
     DomainTaskPriority Priority,
-    DateTime? DueDateUtc) : IRequest<TaskDto?>;
+    DateTime? DueDateUtc,
+    Guid? AssigneeId,
+    Guid[]? TagIds) : IRequest<TaskDto?>;
 
 public sealed record DeleteTaskCommand(Guid TaskId) : IRequest<bool>;
 
@@ -44,7 +71,18 @@ public sealed record GetTasksQuery(
     DateTime? DueToUtc,
     string? Q,
     string? SortBy,
-    bool SortDesc) : IRequest<PagedResultDto<TaskDto>>;
+    bool SortDesc,
+    bool? AssignedToMe,
+    Guid? AssigneeId,
+    Guid? TagId) : IRequest<PagedResultDto<TaskDto>>;
+
+public sealed record AssignTaskCommand(Guid TaskId, Guid? AssigneeId) : IRequest<TaskDto?>;
+
+public sealed record GetOverdueTasksQuery(int Page, int PageSize) : IRequest<PagedResultDto<TaskDto>>;
 
 public sealed record GetTaskByIdQuery(Guid TaskId) : IRequest<TaskDto?>;
+
+public sealed record AddTaskTagCommand(Guid TaskId, Guid TagId) : IRequest<TaskDto?>;
+
+public sealed record RemoveTaskTagCommand(Guid TaskId, Guid TagId) : IRequest<int>;
 

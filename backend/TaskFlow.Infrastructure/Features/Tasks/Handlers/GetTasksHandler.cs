@@ -1,18 +1,18 @@
-using AutoMapper;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Infrastructure.Features.Tasks;
 using TaskFlow.Infrastructure.Persistence;
-using DomainTask = TaskFlow.Domain.Entities.Task;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class GetTasksHandler(
     TaskFlowDbContext dbContext,
-    IMapper mapper) : IRequestHandler<GetTasksQuery, PagedResultDto<TaskDto>>
+    ICurrentUser currentUser) : IRequestHandler<GetTasksQuery, PagedResultDto<TaskDto>>
 {
-    public async Task<PagedResultDto<TaskDto>> Handle(GetTasksQuery request, CancellationToken cancellationToken)
+    public async System.Threading.Tasks.Task<PagedResultDto<TaskDto>> Handle(GetTasksQuery request, CancellationToken cancellationToken)
     {
         var page = request.Page < 1 ? 1 : request.Page;
         var pageSize = request.PageSize is < 1 or > 100 ? 20 : request.PageSize;
@@ -45,6 +45,29 @@ public sealed class GetTasksHandler(
             query = query.Where(t => t.DueDateUtc.HasValue && t.DueDateUtc.Value <= request.DueToUtc.Value);
         }
 
+        if (request.AssignedToMe == true)
+        {
+            if (currentUser.UserId is { } me)
+            {
+                query = query.Where(t => t.AssigneeId == me);
+            }
+            else
+            {
+                query = query.Where(_ => false);
+            }
+        }
+
+        if (request.AssigneeId.HasValue)
+        {
+            query = query.Where(t => t.AssigneeId == request.AssigneeId.Value);
+        }
+
+        if (request.TagId.HasValue)
+        {
+            var tagId = request.TagId.Value;
+            query = query.Where(t => dbContext.TaskTags.Any(tt => tt.TaskId == t.Id && tt.TagId == tagId));
+        }
+
         if (!string.IsNullOrWhiteSpace(request.Q))
         {
             var q = request.Q.Trim();
@@ -75,9 +98,7 @@ public sealed class GetTasksHandler(
         var total = await query.LongCountAsync(cancellationToken);
         var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
 
-        // Ensure we map the correct generic type (DomainTask is an alias for the entity).
-        var mapped = mapper.Map<List<TaskDto>>(items);
+        var mapped = await TaskProjection.ToDtosAsync(dbContext, items, cancellationToken);
         return new PagedResultDto<TaskDto>(mapped, page, pageSize, total);
     }
 }
-

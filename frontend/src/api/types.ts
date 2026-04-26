@@ -15,9 +15,13 @@ export type UserProfile = {
   email: string;
   userName: string;
   roles: string[];
+  role: string;
   organizationId: string;
   organizationName: string;
   organizationJoinCode: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  createdAt: string;
 };
 
 export type ProblemDetails = {
@@ -39,6 +43,14 @@ export type Project = {
 export type TaskStatus = 0 | 1 | 2 | 3;
 export type TaskPriority = 0 | 1 | 2 | 3;
 
+export type ChecklistItem = {
+  id: string;
+  title: string;
+  isCompleted: boolean;
+  order: number;
+  completedAt?: string | null;
+};
+
 export type Task = {
   id: string;
   projectId: string;
@@ -49,6 +61,10 @@ export type Task = {
   dueDateUtc?: string | null;
   createdAtUtc: string;
   updatedAtUtc: string;
+  /** Present when API returns checklist summary on tasks. */
+  checklistTotal?: number;
+  checklistCompleted?: number;
+  checklistProgress?: number;
 };
 
 export type PagedResult<T> = {

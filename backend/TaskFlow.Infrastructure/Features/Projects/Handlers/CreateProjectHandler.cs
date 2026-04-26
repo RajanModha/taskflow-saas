@@ -1,16 +1,21 @@
 using AutoMapper;
 using MediatR;
+using Microsoft.EntityFrameworkCore;
+using TaskFlow.Application.Abstractions;
+using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Projects;
-using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Application.Tenancy;
+using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 
 public sealed class CreateProjectHandler(
     TaskFlowDbContext dbContext,
     ICurrentTenant currentTenant,
-    IMapper mapper)
+    ICurrentUser currentUser,
+    IMapper mapper,
+    IActivityLogger activityLogger)
     : IRequestHandler<CreateProjectCommand, ProjectDto>
 {
     public async Task<ProjectDto> Handle(CreateProjectCommand request, CancellationToken cancellationToken)
@@ -34,6 +39,23 @@ public sealed class CreateProjectHandler(
 
         await dbContext.Projects.AddAsync(project, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        if (currentUser.UserId is { } actorId)
+        {
+            var actor = await dbContext.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == actorId, cancellationToken);
+            var actorName = actor?.UserName ?? string.Empty;
+            await activityLogger.LogAsync(
+                ActivityEntityTypes.Project,
+                project.Id,
+                ActivityActions.ProjectCreated,
+                actorId,
+                actorName,
+                currentTenant.OrganizationId,
+                new { name = project.Name },
+                cancellationToken);
+        }
 
         return mapper.Map<ProjectDto>(project);
     }

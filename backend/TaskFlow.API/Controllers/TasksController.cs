@@ -2,6 +2,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Asp.Versioning;
+using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
 using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
@@ -20,7 +21,17 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         string? Description,
         TaskStatus Status,
         TaskPriority Priority,
-        DateTime? DueDateUtc);
+        DateTime? DueDateUtc,
+        Guid? AssigneeId,
+        Guid[]? TagIds);
+
+    public sealed record AssignTaskRequest(Guid? AssigneeId);
+
+    public sealed record AddChecklistItemRequest(string Title, int? InsertAfterOrder);
+
+    public sealed record UpdateChecklistItemRequest(string? Title, bool? IsCompleted);
+
+    public sealed record ReorderChecklistRequest(Guid[] OrderedIds);
 
     [HttpGet]
     [ProducesResponseType(typeof(PagedResultDto<TaskDto>), StatusCodes.Status200OK)]
@@ -35,6 +46,9 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         [FromQuery] string? q = null,
         [FromQuery] string? sortBy = null,
         [FromQuery] string? sortDir = "desc",
+        [FromQuery] bool? assignedToMe = null,
+        [FromQuery] Guid? assigneeId = null,
+        [FromQuery] Guid? tagId = null,
         CancellationToken cancellationToken = default)
     {
         var sortDesc = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase);
@@ -47,6 +61,7 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
                 ModelState.AddModelError(nameof(status), "Invalid status.");
                 return ValidationProblem(ModelState);
             }
+
             statusEnum = parsed;
         }
 
@@ -58,14 +73,226 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
                 ModelState.AddModelError(nameof(priority), "Invalid priority.");
                 return ValidationProblem(ModelState);
             }
+
             priorityEnum = parsed;
         }
 
         var result = await mediator.Send(
-            new GetTasksQuery(page, pageSize, projectId, statusEnum, priorityEnum, dueFromUtc, dueToUtc, q, sortBy, sortDesc),
+            new GetTasksQuery(
+                page,
+                pageSize,
+                projectId,
+                statusEnum,
+                priorityEnum,
+                dueFromUtc,
+                dueToUtc,
+                q,
+                sortBy,
+                sortDesc,
+                assignedToMe,
+                assigneeId,
+                tagId),
             cancellationToken);
 
         return Ok(result);
+    }
+
+    [HttpGet("overdue")]
+    [ProducesResponseType(typeof(PagedResultDto<TaskDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResultDto<TaskDto>>> GetOverdue(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await mediator.Send(new GetOverdueTasksQuery(page, pageSize), cancellationToken);
+        return Ok(result);
+    }
+
+    public sealed record CreateCommentRequest(string Content);
+
+    public sealed record UpdateCommentRequest(string Content);
+
+    [HttpGet("{taskId:guid}/comments")]
+    [ProducesResponseType(typeof(PagedResultDto<CommentDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PagedResultDto<CommentDto>>> GetComments(
+        [FromRoute] Guid taskId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await mediator.Send(new GetTaskCommentsQuery(taskId, page, pageSize), cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost("{taskId:guid}/comments")]
+    [ProducesResponseType(typeof(CommentDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<CommentDto>> CreateComment(
+        [FromRoute] Guid taskId,
+        [FromBody] CreateCommentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var outcome = await mediator.Send(new CreateTaskCommentCommand(taskId, request.Content), cancellationToken);
+        return outcome.StatusCode switch
+        {
+            StatusCodes.Status201Created => CreatedAtAction(
+                nameof(GetComments),
+                new { taskId },
+                outcome.Comment),
+            StatusCodes.Status401Unauthorized => Unauthorized(),
+            StatusCodes.Status400BadRequest => BadRequest(new { message = "Content is too long after encoding." }),
+            _ => NotFound(),
+        };
+    }
+
+    [HttpPut("{taskId:guid}/comments/{commentId:guid}")]
+    [ProducesResponseType(typeof(CommentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<CommentDto>> UpdateComment(
+        [FromRoute] Guid taskId,
+        [FromRoute] Guid commentId,
+        [FromBody] UpdateCommentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var outcome = await mediator.Send(
+            new UpdateTaskCommentCommand(taskId, commentId, request.Content),
+            cancellationToken);
+
+        return outcome.StatusCode switch
+        {
+            StatusCodes.Status200OK => Ok(outcome.Body),
+            StatusCodes.Status403Forbidden => StatusCode(StatusCodes.Status403Forbidden, new { detail = outcome.Detail }),
+            StatusCodes.Status400BadRequest => BadRequest(new { message = outcome.Detail }),
+            _ => NotFound(),
+        };
+    }
+
+    [HttpDelete("{taskId:guid}/comments/{commentId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteComment(
+        [FromRoute] Guid taskId,
+        [FromRoute] Guid commentId,
+        CancellationToken cancellationToken = default)
+    {
+        var outcome = await mediator.Send(new DeleteTaskCommentCommand(taskId, commentId), cancellationToken);
+        return outcome.StatusCode switch
+        {
+            StatusCodes.Status204NoContent => NoContent(),
+            StatusCodes.Status403Forbidden => Forbid(),
+            _ => NotFound(),
+        };
+    }
+
+    [HttpPost("{taskId:guid}/tags/{tagId:guid}")]
+    [ProducesResponseType(typeof(TaskDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TaskDto>> AddTaskTag(
+        [FromRoute] Guid taskId,
+        [FromRoute] Guid tagId,
+        CancellationToken cancellationToken = default)
+    {
+        var updated = await mediator.Send(new AddTaskTagCommand(taskId, tagId), cancellationToken);
+        return updated is null ? NotFound() : Ok(updated);
+    }
+
+    [HttpDelete("{taskId:guid}/tags/{tagId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RemoveTaskTag(
+        [FromRoute] Guid taskId,
+        [FromRoute] Guid tagId,
+        CancellationToken cancellationToken = default)
+    {
+        var status = await mediator.Send(new RemoveTaskTagCommand(taskId, tagId), cancellationToken);
+        return status == StatusCodes.Status204NoContent ? NoContent() : NotFound();
+    }
+
+    [HttpGet("{taskId:guid}/checklist")]
+    [ProducesResponseType(typeof(IReadOnlyList<ChecklistItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<ChecklistItemDto>>> GetChecklist(
+        [FromRoute] Guid taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await mediator.Send(new GetTaskChecklistQuery(taskId), cancellationToken);
+        return rows is null ? NotFound() : Ok(rows);
+    }
+
+    [HttpPost("{taskId:guid}/checklist/reorder")]
+    [ProducesResponseType(typeof(IReadOnlyList<ChecklistItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<ChecklistItemDto>>> ReorderChecklist(
+        [FromRoute] Guid taskId,
+        [FromBody] ReorderChecklistRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var ordered = await mediator.Send(new ReorderChecklistCommand(taskId, request.OrderedIds), cancellationToken);
+        return ordered is null ? NotFound() : Ok(ordered);
+    }
+
+    [HttpPost("{taskId:guid}/checklist")]
+    [ProducesResponseType(typeof(ChecklistItemDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ChecklistItemDto>> AddChecklistItem(
+        [FromRoute] Guid taskId,
+        [FromBody] AddChecklistItemRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var created = await mediator.Send(
+            new AddChecklistItemCommand(taskId, request.Title, request.InsertAfterOrder),
+            cancellationToken);
+        return created is null
+            ? NotFound()
+            : CreatedAtAction(nameof(GetChecklist), new { taskId }, created);
+    }
+
+    [HttpPut("{taskId:guid}/checklist/{itemId:guid}")]
+    [ProducesResponseType(typeof(ChecklistItemDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ChecklistItemDto>> UpdateChecklistItem(
+        [FromRoute] Guid taskId,
+        [FromRoute] Guid itemId,
+        [FromBody] UpdateChecklistItemRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var updated = await mediator.Send(
+            new UpdateChecklistItemCommand(taskId, itemId, request.Title, request.IsCompleted),
+            cancellationToken);
+        return updated is null ? NotFound() : Ok(updated);
+    }
+
+    [HttpDelete("{taskId:guid}/checklist/{itemId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteChecklistItem(
+        [FromRoute] Guid taskId,
+        [FromRoute] Guid itemId,
+        CancellationToken cancellationToken = default)
+    {
+        var ok = await mediator.Send(new DeleteChecklistItemCommand(taskId, itemId), cancellationToken);
+        return ok ? NoContent() : NotFound();
+    }
+
+    [HttpGet("{taskId:guid}/activity")]
+    [ProducesResponseType(typeof(PagedResultDto<ActivityLogDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PagedResultDto<ActivityLogDto>>> GetTaskActivity(
+        [FromRoute] Guid taskId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await mediator.Send(new GetTaskActivityQuery(taskId, page, pageSize), cancellationToken);
+        return result is null ? NotFound() : Ok(result);
     }
 
     [HttpGet("{taskId:guid}")]
@@ -88,7 +315,9 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         var created = await mediator.Send(request, cancellationToken);
         if (created is null)
         {
-            ModelState.AddModelError("projectId", "Project not found (or not in your workspace).");
+            ModelState.AddModelError(
+                "projectId",
+                "Project was not found in your workspace, the assignee is invalid, or one or more tags are not in this workspace.");
             return ValidationProblem(ModelState);
         }
 
@@ -109,9 +338,39 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
             request.Description,
             request.Status,
             request.Priority,
-            request.DueDateUtc);
+            request.DueDateUtc,
+            request.AssigneeId,
+            request.TagIds);
         var updated = await mediator.Send(cmd, cancellationToken);
-        return updated is null ? NotFound() : Ok(updated);
+        if (updated is null)
+        {
+            ModelState.AddModelError(
+                "assigneeId",
+                "Task was not found, the assignee is invalid, or one or more tags are not in this workspace.");
+            return ValidationProblem(ModelState);
+        }
+
+        return Ok(updated);
+    }
+
+    [HttpPut("{taskId:guid}/assign")]
+    [ProducesResponseType(typeof(TaskDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<TaskDto>> Assign(
+        [FromRoute] Guid taskId,
+        [FromBody] AssignTaskRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var updated = await mediator.Send(new AssignTaskCommand(taskId, request.AssigneeId), cancellationToken);
+        if (updated is null)
+        {
+            ModelState.AddModelError(
+                "assigneeId",
+                "Task was not found, or the assignee is not a member of this workspace.");
+            return ValidationProblem(ModelState);
+        }
+
+        return Ok(updated);
     }
 
     [HttpDelete("{taskId:guid}")]
@@ -125,4 +384,3 @@ public sealed class TasksController(IMediator mediator) : ControllerBase
         return deleted ? NoContent() : NotFound();
     }
 }
-

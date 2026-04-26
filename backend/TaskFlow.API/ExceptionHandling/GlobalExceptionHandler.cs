@@ -1,3 +1,4 @@
+using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Application.Common;
@@ -12,6 +13,28 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
         Exception exception,
         CancellationToken cancellationToken)
     {
+        if (exception is ValidationException validationException)
+        {
+            var errors = validationException.Errors
+                .GroupBy(e => e.PropertyName)
+                .ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).ToArray());
+
+            var validationProblem = new ProblemDetails
+            {
+                Title = "One or more validation errors occurred.",
+                Status = StatusCodes.Status400BadRequest,
+                Type = "https://httpstatuses.com/400",
+                Detail = environment.IsDevelopment() ? validationException.Message : null,
+                Extensions = { ["errors"] = errors },
+            };
+
+            logger.LogWarning(validationException, "Request validation failed");
+            httpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
+            httpContext.Response.ContentType = "application/problem+json";
+            await httpContext.Response.WriteAsJsonAsync(validationProblem, cancellationToken: cancellationToken);
+            return true;
+        }
+
         var (status, title, type) = exception switch
         {
             TenantContextMissingException => (

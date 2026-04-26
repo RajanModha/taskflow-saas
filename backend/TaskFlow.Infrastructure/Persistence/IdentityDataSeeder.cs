@@ -101,6 +101,8 @@ public static class IdentityDataSeeder
                 EmailVerified = true,
                 CreatedAtUtc = DateTime.UtcNow,
                 OrganizationId = defaultOrg.Id,
+                WorkspaceRole = WorkspaceRole.Owner,
+                WorkspaceJoinedAtUtc = DateTime.UtcNow,
             };
             var create = await userManager.CreateAsync(admin, adminPassword);
             if (!create.Succeeded)
@@ -112,6 +114,19 @@ public static class IdentityDataSeeder
         if (admin.OrganizationId == Guid.Empty)
         {
             admin.OrganizationId = defaultOrg.Id;
+            admin.WorkspaceJoinedAtUtc = DateTime.UtcNow;
+            await userManager.UpdateAsync(admin);
+        }
+
+        if (admin.WorkspaceRole != WorkspaceRole.Owner)
+        {
+            admin.WorkspaceRole = WorkspaceRole.Owner;
+            await userManager.UpdateAsync(admin);
+        }
+
+        if (admin.WorkspaceJoinedAtUtc == default)
+        {
+            admin.WorkspaceJoinedAtUtc = admin.CreatedAtUtc;
             await userManager.UpdateAsync(admin);
         }
         if (!await userManager.IsInRoleAsync(admin, DomainRoles.Admin))
@@ -146,9 +161,12 @@ public static class IdentityDataSeeder
 
         if (existingUsersNeedingOrg.Count > 0)
         {
+            var assignedAt = DateTime.UtcNow;
             foreach (var user in existingUsersNeedingOrg)
             {
                 user.OrganizationId = defaultOrg.Id;
+                user.WorkspaceRole = WorkspaceRole.Member;
+                user.WorkspaceJoinedAtUtc = assignedAt;
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -225,6 +243,7 @@ public static class IdentityDataSeeder
 
                 if (existing is null)
                 {
+                    var createdAt = now.AddDays(-random.Next(1, 200));
                     var user = new ApplicationUser
                     {
                         Id = Guid.NewGuid(),
@@ -232,8 +251,10 @@ public static class IdentityDataSeeder
                         UserName = email,
                         EmailConfirmed = true,
                         EmailVerified = true,
-                        CreatedAtUtc = now.AddDays(-random.Next(1, 200)),
+                        CreatedAtUtc = createdAt,
                         OrganizationId = org.Id,
+                        WorkspaceRole = i == 1 ? WorkspaceRole.Owner : WorkspaceRole.Member,
+                        WorkspaceJoinedAtUtc = createdAt,
                     };
 
                     var created = await userManager.CreateAsync(user, seedOptions.DemoUserPassword);

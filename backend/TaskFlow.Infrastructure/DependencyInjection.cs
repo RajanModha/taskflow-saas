@@ -6,8 +6,11 @@ using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Auth;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Workspaces;
+using TaskFlow.Application.Activity;
+using TaskFlow.Infrastructure.Activity;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Identity;
+using TaskFlow.Infrastructure.Projects;
 using TaskFlow.Infrastructure.Tenancy;
 using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Infrastructure.Services;
@@ -23,9 +26,12 @@ public static class DependencyInjection
         services.AddOptions<SeedOptions>().Bind(configuration.GetSection(SeedOptions.SectionName));
 
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IBoardCacheVersion, BoardCacheVersion>();
+        services.AddSingleton<IActivityLogger, ActivityLogger>();
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentTenant, CurrentTenant>();
+        services.AddScoped<ICurrentUser, CurrentUser>();
 
         var connectionString = configuration.GetConnectionString("DefaultConnection");
         if (string.IsNullOrWhiteSpace(connectionString))
@@ -55,6 +61,8 @@ public static class DependencyInjection
         services.AddScoped<IUserSessionIssuer, UserSessionIssuer>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IWorkspaceService, WorkspaceService>();
+        services.AddScoped<IWorkspaceManagementService, WorkspaceManagementService>();
+        services.AddScoped<IWorkspaceTagService, WorkspaceTagService>();
         services.AddSingleton<IAppInfo, AppInfoService>();
         services.AddHostedService<RefreshTokenCleanupHostedService>();
         return services;

@@ -1,7 +1,9 @@
 using AutoMapper;
 using FluentValidation;
+using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TaskFlow.Application.Behaviors;
 using TaskFlow.Application.Mapping;
 using TaskFlow.Application.Validation;
 
@@ -12,6 +14,7 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddValidatorsFromAssemblyContaining<RegisterRequestValidator>();
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         // Manual AutoMapper wiring to avoid relying on the (archived) DI extension package.
         services.AddSingleton(sp =>

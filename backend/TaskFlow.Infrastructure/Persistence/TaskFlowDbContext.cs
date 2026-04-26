@@ -13,9 +13,22 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<TaskFlow.Domain.Entities.Task> Tasks => Set<TaskFlow.Domain.Entities.Task>();
+
+    public DbSet<Comment> Comments => Set<Comment>();
+
+    public DbSet<Tag> Tags => Set<Tag>();
+
+    public DbSet<TaskTag> TaskTags => Set<TaskTag>();
+
+    public DbSet<ChecklistItem> ChecklistItems => Set<ChecklistItem>();
+
+    public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
+
     public DbSet<SeedRun> SeedRuns => Set<SeedRun>();
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
+    public DbSet<PendingInvite> PendingInvites => Set<PendingInvite>();
 
     public TaskFlowDbContext(
         DbContextOptions<TaskFlowDbContext> options,
@@ -44,6 +57,12 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.Property(u => u.Email).HasMaxLength(256);
             entity.Property(u => u.NormalizedEmail).HasMaxLength(256);
             entity.Property(u => u.CreatedAtUtc).IsRequired();
+
+            entity.Property(u => u.DisplayName).HasMaxLength(50);
+            entity.Property(u => u.AvatarUrl).HasMaxLength(2048);
+
+            entity.Property(u => u.WorkspaceRole).IsRequired();
+            entity.Property(u => u.WorkspaceJoinedAtUtc).IsRequired();
 
             entity.Property(u => u.OrganizationId).IsRequired();
             entity.Property(u => u.EmailVerificationToken).HasMaxLength(64);
@@ -100,6 +119,7 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
             entity.Property(t => t.UpdatedAtUtc).IsRequired();
 
             entity.Property(t => t.OrganizationId).IsRequired();
+            entity.Property(t => t.ReminderSent).IsRequired().HasDefaultValue(false);
 
             entity.HasQueryFilter(t => _currentTenant.IsSet && t.OrganizationId == _currentTenant.OrganizationId);
             entity.HasIndex(t => t.OrganizationId);
@@ -113,6 +133,141 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
                 // Enforce tenant-safe relationship: task can only point to project in same org.
                 .HasForeignKey(t => new { t.ProjectId, t.OrganizationId })
                 .HasPrincipalKey(nameof(Project.Id), nameof(Project.OrganizationId))
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity
+                .HasOne<ApplicationUser>()
+                .WithMany()
+                .HasForeignKey(t => t.AssigneeId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<Comment>(entity =>
+        {
+            entity.Property(c => c.Content).HasMaxLength(4000).IsRequired();
+            entity.Property(c => c.CreatedAtUtc).IsRequired();
+            entity.Property(c => c.UpdatedAtUtc).IsRequired();
+            entity.Property(c => c.IsEdited).IsRequired();
+            entity.Property(c => c.IsDeleted).IsRequired().HasDefaultValue(false);
+
+            entity
+                .HasOne(c => c.ParentTask)
+                .WithMany(t => t.Comments)
+                .HasForeignKey(c => c.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity
+                .HasOne<ApplicationUser>()
+                .WithMany()
+                .HasForeignKey(c => c.AuthorId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasQueryFilter(
+                c => _currentTenant.IsSet && c.ParentTask.OrganizationId == _currentTenant.OrganizationId);
+
+            entity.HasIndex(c => new { c.TaskId, c.CreatedAtUtc })
+                .IsDescending(false, true);
+        });
+
+        builder.Entity<Tag>(entity =>
+        {
+            entity.Property(t => t.Name).HasMaxLength(30).IsRequired();
+            entity.Property(t => t.NormalizedName).HasMaxLength(30).IsRequired();
+            entity.Property(t => t.Color).HasMaxLength(7).IsRequired();
+            entity.Property(t => t.CreatedAtUtc).IsRequired();
+            entity.Property(t => t.OrganizationId).IsRequired();
+
+            entity
+                .HasOne<Organization>()
+                .WithMany()
+                .HasForeignKey(t => t.OrganizationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(t => _currentTenant.IsSet && t.OrganizationId == _currentTenant.OrganizationId);
+            entity.HasIndex(t => new { t.OrganizationId, t.NormalizedName }).IsUnique();
+        });
+
+        builder.Entity<TaskTag>(entity =>
+        {
+            entity.HasKey(x => new { x.TaskId, x.TagId });
+
+            entity
+                .HasOne(x => x.ParentTask)
+                .WithMany(t => t.TaskTags)
+                .HasForeignKey(x => x.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity
+                .HasOne(x => x.Tag)
+                .WithMany(t => t.TaskTags)
+                .HasForeignKey(x => x.TagId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(
+                x => _currentTenant.IsSet && x.ParentTask.OrganizationId == _currentTenant.OrganizationId);
+        });
+
+        builder.Entity<ChecklistItem>(entity =>
+        {
+            entity.Property(c => c.Title).HasMaxLength(200).IsRequired();
+            entity.Property(c => c.IsCompleted).IsRequired();
+            entity.Property(c => c.Order).HasColumnName("item_order");
+            entity.Property(c => c.CreatedAtUtc).IsRequired();
+
+            entity
+                .HasOne(c => c.ParentTask)
+                .WithMany(t => t.ChecklistItems)
+                .HasForeignKey(c => c.TaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasQueryFilter(
+                c => _currentTenant.IsSet && c.ParentTask.OrganizationId == _currentTenant.OrganizationId);
+
+            entity.HasIndex(c => new { c.TaskId, c.Order });
+        });
+
+        builder.Entity<ActivityLog>(entity =>
+        {
+            entity.Property(a => a.EntityType).HasMaxLength(32).IsRequired();
+            entity.Property(a => a.Action).HasMaxLength(80).IsRequired();
+            entity.Property(a => a.ActorName).HasMaxLength(256).IsRequired();
+            entity.Property(a => a.OccurredAtUtc).IsRequired();
+            entity.Property(a => a.Metadata).HasMaxLength(4000);
+            entity.Property(a => a.OrganizationId).IsRequired();
+
+            entity
+                .HasOne<ApplicationUser>()
+                .WithMany()
+                .HasForeignKey(a => a.ActorId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasQueryFilter(
+                a => _currentTenant.IsSet && a.OrganizationId == _currentTenant.OrganizationId);
+
+            entity.HasIndex(e => new { e.EntityType, e.EntityId, e.OccurredAtUtc })
+                .IsDescending(false, false, true);
+
+            entity.HasIndex(a => a.OrganizationId);
+        });
+
+        builder.Entity<PendingInvite>(entity =>
+        {
+            entity.Property(i => i.Email).HasMaxLength(256).IsRequired();
+            entity.Property(i => i.NormalizedEmail).HasMaxLength(256).IsRequired();
+            entity.Property(i => i.Role).IsRequired();
+            entity.Property(i => i.TokenHash).HasMaxLength(64).IsRequired();
+            entity.Property(i => i.ExpiresAtUtc).IsRequired();
+            entity.Property(i => i.SentAtUtc).IsRequired();
+
+            entity.HasIndex(i => i.TokenHash).IsUnique();
+            entity.HasIndex(i => new { i.OrganizationId, i.Email });
+
+            entity.HasQueryFilter(i => _currentTenant.IsSet && i.OrganizationId == _currentTenant.OrganizationId);
+
+            entity
+                .HasOne<Organization>()
+                .WithMany()
+                .HasForeignKey(i => i.OrganizationId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

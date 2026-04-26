@@ -25,6 +25,15 @@ public sealed class CreateTaskCommandValidator : AbstractValidator<CreateTaskCom
 
         RuleFor(x => x.Priority)
             .IsInEnum();
+
+        When(
+            x => x.TagIds is not null,
+            () =>
+            {
+                RuleFor(x => x.TagIds!)
+                    .Must(ids => ids.Length <= 50)
+                    .WithMessage("At most 50 tags can be assigned to a task.");
+            });
     }
 }
 

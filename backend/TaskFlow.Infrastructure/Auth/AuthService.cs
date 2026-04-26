@@ -83,6 +83,8 @@ public sealed class AuthService(
             EmailVerified = false,
             CreatedAtUtc = now,
             OrganizationId = orgId,
+            WorkspaceRole = TaskFlow.Domain.Entities.WorkspaceRole.Owner,
+            WorkspaceJoinedAtUtc = now,
         };
 
         var rawVerification = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -645,31 +647,211 @@ public sealed class AuthService(
             return null;
         }
 
+        return await MapToProfileResponseAsync(user, cancellationToken);
+    }
+
+    public async Task<ChangePasswordOutcome> ChangePasswordAsync(
+        Guid userId,
+        ChangePasswordRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var user = await dbContext.Users
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        if (user is null)
+        {
+            return new ChangePasswordServerError();
+        }
+
+        var refreshHash = RefreshTokenCrypto.HashRaw(request.RefreshToken.Trim());
+        var sessionValid = await dbContext.RefreshTokens
+            .AsNoTracking()
+            .AnyAsync(
+                t => t.UserId == userId &&
+                     t.TokenHash == refreshHash &&
+                     t.RevokedAtUtc == null &&
+                     t.ExpiresAtUtc > now,
+                cancellationToken);
+        if (!sessionValid)
+        {
+            return new ChangePasswordInvalidRefresh();
+        }
+
+        if (string.IsNullOrEmpty(user.PasswordHash) ||
+            passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.CurrentPassword) ==
+            PasswordVerificationResult.Failed)
+        {
+            return new ChangePasswordWrongCurrentPassword();
+        }
+
+        if (passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.NewPassword) !=
+            PasswordVerificationResult.Failed)
+        {
+            return new ChangePasswordNewSameAsCurrent();
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var changeResult = await userManager.ChangePasswordAsync(
+                user,
+                request.CurrentPassword,
+                request.NewPassword);
+            if (!changeResult.Succeeded)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new ChangePasswordPasswordPolicyFailed(MapChangePasswordIdentityErrors(changeResult));
+            }
+
+            await dbContext.RefreshTokens
+                .Where(t => t.UserId == userId && t.RevokedAtUtc == null && t.TokenHash != refreshHash)
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(t => t.RevokedAtUtc, now),
+                    cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+
+        return new ChangePasswordSucceeded("Password updated. Other devices have been logged out.");
+    }
+
+    public async Task<UpdateProfileOutcome> UpdateProfileAsync(
+        Guid userId,
+        UpdateProfileRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await dbContext.Users
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        if (user is null)
+        {
+            return new UpdateProfileServerError();
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.UserName))
+        {
+            var trimmedName = request.UserName.Trim();
+            var normalized = trimmedName.ToUpperInvariant();
+            if (normalized != user.NormalizedUserName)
+            {
+                var takenInOrg = await dbContext.Users
+                    .IgnoreQueryFilters()
+                    .AnyAsync(
+                        u => u.OrganizationId == user.OrganizationId &&
+                             u.Id != userId &&
+                             u.NormalizedUserName == normalized,
+                        cancellationToken);
+                if (takenInOrg)
+                {
+                    return new UpdateProfileUserNameConflict();
+                }
+
+                var setName = await userManager.SetUserNameAsync(user, trimmedName);
+                if (!setName.Succeeded)
+                {
+                    if (setName.Errors.Any(e => e.Code == "DuplicateUserName"))
+                    {
+                        return new UpdateProfileUserNameConflict();
+                    }
+
+                    logger.LogWarning(
+                        "SetUserNameAsync failed for user {UserId}: {Errors}",
+                        user.Id,
+                        string.Join("; ", setName.Errors.Select(e => $"{e.Code}: {e.Description}")));
+                    return new UpdateProfileServerError();
+                }
+            }
+        }
+
+        if (request.DisplayName is not null)
+        {
+            var trimmedDisplay = request.DisplayName.Trim();
+            user.DisplayName = trimmedDisplay.Length == 0 ? null : trimmedDisplay;
+            var updateDisplay = await userManager.UpdateAsync(user);
+            if (!updateDisplay.Succeeded)
+            {
+                logger.LogWarning(
+                    "UpdateAsync failed after display name change for user {UserId}: {Errors}",
+                    user.Id,
+                    string.Join("; ", updateDisplay.Errors.Select(e => $"{e.Code}: {e.Description}")));
+                return new UpdateProfileServerError();
+            }
+        }
+
+        var refreshed = await dbContext.Users
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .FirstAsync(u => u.Id == userId, cancellationToken);
+        var profile = await MapToProfileResponseAsync(refreshed, cancellationToken);
+        return new UpdateProfileSucceeded(profile);
+    }
+
+    private async Task<UserProfileResponse> MapToProfileResponseAsync(
+        ApplicationUser user,
+        CancellationToken cancellationToken)
+    {
         if (user.OrganizationId == Guid.Empty)
         {
+            var emptyRoles = Array.Empty<string>();
             return new UserProfileResponse(
                 user.Id,
                 user.Email ?? string.Empty,
                 user.UserName ?? string.Empty,
-                Array.Empty<string>(),
+                emptyRoles,
+                PickPrimaryRole(emptyRoles),
                 Guid.Empty,
                 string.Empty,
-                string.Empty);
+                string.Empty,
+                user.DisplayName,
+                user.AvatarUrl,
+                new DateTimeOffset(user.CreatedAtUtc, TimeSpan.Zero));
         }
 
-        var roles = await userManager.GetRolesAsync(user);
-        var organization = await dbContext.Organizations.FirstOrDefaultAsync(
-            o => o.Id == user.OrganizationId,
-            cancellationToken);
+        var roles = (await userManager.GetRolesAsync(user)).ToArray();
+        var organization = await dbContext.Organizations
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.Id == user.OrganizationId, cancellationToken);
 
         return new UserProfileResponse(
             user.Id,
             user.Email ?? string.Empty,
             user.UserName ?? string.Empty,
-            roles.ToArray(),
+            roles,
+            PickPrimaryRole(roles),
             user.OrganizationId,
             organization?.Name ?? string.Empty,
-            organization?.JoinCode ?? string.Empty);
+            organization?.JoinCode ?? string.Empty,
+            user.DisplayName,
+            user.AvatarUrl,
+            new DateTimeOffset(user.CreatedAtUtc, TimeSpan.Zero));
+    }
+
+    private static string PickPrimaryRole(IReadOnlyList<string> roles)
+    {
+        foreach (var r in roles)
+        {
+            if (string.Equals(r, DomainRoles.Admin, StringComparison.OrdinalIgnoreCase))
+            {
+                return DomainRoles.Admin;
+            }
+        }
+
+        return roles.Count > 0 ? roles[0] : DomainRoles.User;
+    }
+
+    private static IReadOnlyDictionary<string, string[]> MapChangePasswordIdentityErrors(IdentityResult result)
+    {
+        var messages = result.Errors.Select(e => e.Description).ToArray();
+        return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [nameof(ChangePasswordRequest.NewPassword)] = messages,
+        };
     }
 
     private SessionConnectionInfo? GetSessionConnectionInfo()

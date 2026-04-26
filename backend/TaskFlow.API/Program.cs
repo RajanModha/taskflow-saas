@@ -15,9 +15,12 @@ using TaskFlow.API;
 using TaskFlow.API.Middleware;
 using TaskFlow.API.ExceptionHandling;
 using TaskFlow.Application;
+using TaskFlow.Application.Auth;
+using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Email;
+using TaskFlow.Infrastructure.Features.Tasks;
 
 Serilog.Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -126,7 +129,19 @@ builder.Services.AddAuthentication(options =>
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(
+        "OwnerPolicy",
+        policy => policy.RequireClaim(WorkspaceJwtClaims.Role, WorkspaceRoleStrings.Owner));
+    options.AddPolicy(
+        "AdminPolicy",
+        policy => policy.RequireAssertion(ctx =>
+        {
+            var v = ctx.User.FindFirst(WorkspaceJwtClaims.Role)?.Value;
+            return v is WorkspaceRoleStrings.Owner or WorkspaceRoleStrings.Admin;
+        }));
+});
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -162,6 +177,7 @@ builder.Services.Configure<Resend.ResendClientOptions>(options =>
 });
 builder.Services.TryAddTransient<Resend.IResend, Resend.ResendClient>();
 builder.Services.AddScoped<IEmailService, ResendEmailService>();
+builder.Services.AddHostedService<ReminderHostedService>();
 
 var allowedCorsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
 if (allowedCorsOrigins is null || allowedCorsOrigins.Length == 0)

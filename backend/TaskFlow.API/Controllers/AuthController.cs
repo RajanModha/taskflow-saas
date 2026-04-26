@@ -235,6 +235,75 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         return profile is null ? NotFound() : Ok(profile);
     }
 
+    /// <summary>Change password. Revokes refresh tokens on other devices; this session stays signed in.</summary>
+    [Authorize]
+    [HttpPut("password")]
+    [ProducesResponseType(typeof(ChangePasswordResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> ChangePassword(
+        [FromBody] ChangePasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
+
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var outcome = await authService.ChangePasswordAsync(userId.Value, request, cancellationToken);
+        return outcome switch
+        {
+            ChangePasswordSucceeded s => Ok(new ChangePasswordResponse(s.Message)),
+            ChangePasswordWrongCurrentPassword => Problem(
+                title: "Invalid password",
+                detail: "Current password is incorrect.",
+                statusCode: StatusCodes.Status401Unauthorized),
+            ChangePasswordNewSameAsCurrent => NewPasswordSameAsCurrentValidationProblem(),
+            ChangePasswordInvalidRefresh => Problem(
+                title: "Invalid refresh token",
+                detail: "Provide a valid refresh token for this device.",
+                statusCode: StatusCodes.Status400BadRequest),
+            ChangePasswordPasswordPolicyFailed f => PasswordPolicyValidationProblem(f.Errors),
+            ChangePasswordServerError => Problem(statusCode: StatusCodes.Status500InternalServerError),
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
+        };
+    }
+
+    /// <summary>Update display name and/or user name (unique within your workspace).</summary>
+    [Authorize]
+    [HttpPut("profile")]
+    [ProducesResponseType(typeof(UserProfileResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> UpdateProfile(
+        [FromBody] UpdateProfileRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        var outcome = await authService.UpdateProfileAsync(userId.Value, request, cancellationToken);
+        return outcome switch
+        {
+            UpdateProfileSucceeded s => Ok(s.Response),
+            UpdateProfileUserNameConflict => Problem(
+                title: "Conflict",
+                detail: "That username is already in use.",
+                statusCode: StatusCodes.Status409Conflict),
+            UpdateProfileServerError => Problem(statusCode: StatusCodes.Status500InternalServerError),
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
+        };
+    }
+
     private Guid? TryGetUserId()
     {
         var userIdRaw = User.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -253,6 +322,15 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
             }
         }
 
+        return ValidationProblem(modelState);
+    }
+
+    private ActionResult NewPasswordSameAsCurrentValidationProblem()
+    {
+        var modelState = new ModelStateDictionary();
+        modelState.AddModelError(
+            nameof(ChangePasswordRequest.NewPassword),
+            "New password must be different from your current password.");
         return ValidationProblem(modelState);
     }
 

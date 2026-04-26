@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Identity;
+using TaskFlow.Domain.Entities;
 
 namespace TaskFlow.Infrastructure.Identity;
 
@@ -6,6 +7,14 @@ public sealed class ApplicationUser : IdentityUser<Guid>
 {
     public DateTime CreatedAtUtc { get; set; }
     public Guid OrganizationId { get; set; }
+
+    public WorkspaceRole WorkspaceRole { get; set; }
+
+    public DateTime WorkspaceJoinedAtUtc { get; set; }
+
+    public string? DisplayName { get; set; }
+
+    public string? AvatarUrl { get; set; }
 
     public bool EmailVerified { get; set; }
 

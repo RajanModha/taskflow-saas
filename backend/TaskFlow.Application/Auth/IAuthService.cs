@@ -38,4 +38,14 @@ public interface IAuthService
         CancellationToken cancellationToken = default);
 
     Task<UserProfileResponse?> GetProfileAsync(Guid userId, CancellationToken cancellationToken = default);
+
+    Task<ChangePasswordOutcome> ChangePasswordAsync(
+        Guid userId,
+        ChangePasswordRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<UpdateProfileOutcome> UpdateProfileAsync(
+        Guid userId,
+        UpdateProfileRequest request,
+        CancellationToken cancellationToken = default);
 }

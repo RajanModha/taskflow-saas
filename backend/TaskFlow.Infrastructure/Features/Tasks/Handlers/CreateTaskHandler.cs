@@ -1,20 +1,32 @@
-using AutoMapper;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using TaskFlow.Application.Abstractions;
+using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
+using TaskFlow.Application.Dashboard;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Application.Dashboard;
+using TaskFlow.Infrastructure.Email;
+using TaskFlow.Infrastructure.Features.Tasks;
+using TaskFlow.Infrastructure.Identity;
 using TaskFlow.Infrastructure.Persistence;
+using DomainTask = TaskFlow.Domain.Entities.Task;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class CreateTaskHandler(
     TaskFlowDbContext dbContext,
     ICurrentTenant currentTenant,
-    IMapper mapper,
-    IMemoryCache cache) : IRequestHandler<CreateTaskCommand, TaskDto?>
+    ICurrentUser currentUser,
+    IEmailService emailService,
+    IOptions<EmailSettings> emailSettings,
+    ILogger<CreateTaskHandler> logger,
+    IMemoryCache cache,
+    IBoardCacheVersion boardCacheVersion,
+    IActivityLogger activityLogger) : IRequestHandler<CreateTaskCommand, TaskDto?>
 {
     public async System.Threading.Tasks.Task<TaskDto?> Handle(CreateTaskCommand request, CancellationToken cancellationToken)
     {
@@ -23,15 +35,40 @@ public sealed class CreateTaskHandler(
             throw new TenantContextMissingException();
         }
 
-        var projectExists = await dbContext.Projects
+        var project = await dbContext.Projects
             .AsNoTracking()
-            .AnyAsync(p => p.Id == request.ProjectId, cancellationToken);
+            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
 
-        if (!projectExists) return null;
+        if (project is null)
+        {
+            return null;
+        }
+
+        ApplicationUser? assignee = null;
+        if (request.AssigneeId is { } assigneeId)
+        {
+            assignee = await dbContext.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == assigneeId, cancellationToken);
+            if (assignee is null || assignee.OrganizationId != currentTenant.OrganizationId)
+            {
+                return null;
+            }
+        }
+
+        if (request.TagIds is { Length: > 0 } tagIdsForValidate &&
+            !await TaskTagging.ValidateTagIdsInOrganizationAsync(
+                dbContext,
+                currentTenant.OrganizationId,
+                tagIdsForValidate,
+                cancellationToken))
+        {
+            return null;
+        }
 
         var now = DateTime.UtcNow;
 
-        var task = new TaskFlow.Domain.Entities.Task
+        var task = new DomainTask
         {
             Id = Guid.NewGuid(),
             OrganizationId = currentTenant.OrganizationId,
@@ -43,13 +80,51 @@ public sealed class CreateTaskHandler(
             DueDateUtc = request.DueDateUtc,
             CreatedAtUtc = now,
             UpdatedAtUtc = now,
+            AssigneeId = request.AssigneeId,
+            ReminderSent = false,
         };
 
         await dbContext.Tasks.AddAsync(task, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        await TaskTagging.ReplaceTaskTagsAsync(dbContext, task.Id, request.TagIds, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        if (assignee is not null)
+        {
+            await TaskAssignmentNotifier.NotifyAssigneeAsync(
+                dbContext,
+                emailService,
+                emailSettings,
+                logger,
+                currentUser.UserId,
+                task,
+                project.Name,
+                assignee,
+                cancellationToken);
+        }
+
         cache.Remove(DashboardCacheKeys.DashboardStats(currentTenant.OrganizationId));
-        return mapper.Map<TaskDto>(task);
+        boardCacheVersion.BumpProject(task.ProjectId);
+
+        if (currentUser.UserId is { } creatorId)
+        {
+            var creator = await dbContext.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == creatorId, cancellationToken);
+            var actorName = creator?.UserName ?? string.Empty;
+            await activityLogger.LogAsync(
+                ActivityEntityTypes.Task,
+                task.Id,
+                ActivityActions.TaskCreated,
+                creatorId,
+                actorName,
+                currentTenant.OrganizationId,
+                new { projectId = task.ProjectId, title = task.Title },
+                cancellationToken);
+        }
+
+        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [task], cancellationToken);
+        return dtoList[0];
     }
 }
-

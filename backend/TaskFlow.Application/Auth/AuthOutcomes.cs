@@ -42,3 +42,26 @@ public sealed record ResetPasswordPasswordPolicyFailed(IReadOnlyDictionary<strin
 
 /// <summary>Persistence failed after validation; client receives a generic message.</summary>
 public sealed record ResetPasswordServerError : ResetPasswordOutcome;
+
+public abstract record ChangePasswordOutcome;
+
+public sealed record ChangePasswordSucceeded(string Message) : ChangePasswordOutcome;
+
+public sealed record ChangePasswordWrongCurrentPassword : ChangePasswordOutcome;
+
+public sealed record ChangePasswordNewSameAsCurrent : ChangePasswordOutcome;
+
+public sealed record ChangePasswordInvalidRefresh : ChangePasswordOutcome;
+
+public sealed record ChangePasswordPasswordPolicyFailed(IReadOnlyDictionary<string, string[]> Errors)
+    : ChangePasswordOutcome;
+
+public sealed record ChangePasswordServerError : ChangePasswordOutcome;
+
+public abstract record UpdateProfileOutcome;
+
+public sealed record UpdateProfileSucceeded(UserProfileResponse Response) : UpdateProfileOutcome;
+
+public sealed record UpdateProfileUserNameConflict : UpdateProfileOutcome;
+
+public sealed record UpdateProfileServerError : UpdateProfileOutcome;

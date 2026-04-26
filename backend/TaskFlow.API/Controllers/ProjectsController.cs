@@ -2,8 +2,10 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Asp.Versioning;
+using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Projects;
+using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.API.Controllers;
 
@@ -14,6 +16,8 @@ namespace TaskFlow.API.Controllers;
 public sealed class ProjectsController(IMediator mediator) : ControllerBase
 {
     public sealed record UpdateProjectRequest(string Name, string? Description);
+
+    public sealed record MoveBoardTaskRequest(TaskStatus NewStatus);
 
     [HttpGet]
     [ProducesResponseType(typeof(PagedResultDto<ProjectDto>), StatusCodes.Status200OK)]
@@ -43,6 +47,52 @@ public sealed class ProjectsController(IMediator mediator) : ControllerBase
     {
         var result = await mediator.Send(new GetProjectByIdQuery(projectId), cancellationToken);
         return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpGet("{projectId:guid}/activity")]
+    [ProducesResponseType(typeof(PagedResultDto<ActivityLogDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PagedResultDto<ActivityLogDto>>> GetProjectActivity(
+        [FromRoute] Guid projectId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await mediator.Send(new GetProjectActivityQuery(projectId, page, pageSize), cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpGet("{projectId:guid}/board")]
+    [ProducesResponseType(typeof(ProjectBoardResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ProjectBoardResponse>> GetBoard(
+        [FromRoute] Guid projectId,
+        [FromQuery] Guid? assigneeId = null,
+        [FromQuery] Guid? tagId = null,
+        [FromQuery] string? q = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await mediator.Send(
+            new GetProjectBoardQuery(projectId, assigneeId, tagId, q),
+            cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPut("{projectId:guid}/board/tasks/{taskId:guid}/move")]
+    [HttpPatch("{projectId:guid}/board/tasks/{taskId:guid}/move")]
+    [ProducesResponseType(typeof(BoardTaskDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<BoardTaskDto>> MoveBoardTask(
+        [FromRoute] Guid projectId,
+        [FromRoute] Guid taskId,
+        [FromBody] MoveBoardTaskRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var moved = await mediator.Send(
+            new MoveProjectBoardTaskCommand(projectId, taskId, request.NewStatus),
+            cancellationToken);
+        return moved is null ? NotFound() : Ok(moved);
     }
 
     [HttpPost]

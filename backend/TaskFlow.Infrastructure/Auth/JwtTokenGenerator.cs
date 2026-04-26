@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using TaskFlow.Application.Auth;
+using TaskFlow.Domain.Entities;
 
 namespace TaskFlow.Infrastructure.Auth;
 
@@ -16,6 +17,7 @@ public sealed class JwtTokenGenerator(IOptions<JwtSettings> options) : IJwtToken
         string email,
         IEnumerable<string> roles,
         Guid organizationId,
+        WorkspaceRole workspaceRole,
         DateTime utcNow,
         out DateTime expiresUtc)
     {
@@ -34,6 +36,7 @@ public sealed class JwtTokenGenerator(IOptions<JwtSettings> options) : IJwtToken
             new(JwtRegisteredClaimNames.Email, email),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new("org_id", organizationId.ToString()),
+            new(WorkspaceJwtClaims.Role, workspaceRole.ToString()),
         };
         claims.AddRange(roleList.Select(r => new Claim(ClaimTypes.Role, r)));
 
