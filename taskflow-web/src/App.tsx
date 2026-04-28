@@ -2,6 +2,12 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import AppLayout from './components/layout/AppLayout';
 import SettingsLayout from './components/settings/SettingsLayout';
 import DashboardPage from './pages/DashboardPage';
+import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
+import LoginPage from './pages/auth/LoginPage';
+import RegisterPage from './pages/auth/RegisterPage';
+import ResetPasswordPage from './pages/auth/ResetPasswordPage';
+import VerifyEmailPage from './pages/auth/VerifyEmailPage';
+import VerifyEmailPendingPage from './pages/auth/VerifyEmailPendingPage';
 import NotificationsPage from './pages/NotificationsPage';
 import ProjectsPage from './pages/ProjectsPage';
 import TaskListPage from './pages/projects/TaskListPage';
@@ -18,6 +24,13 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="login" element={<LoginPage />} />
+        <Route path="register" element={<RegisterPage />} />
+        <Route path="verify-email-pending" element={<VerifyEmailPendingPage />} />
+        <Route path="verify-email" element={<VerifyEmailPage />} />
+        <Route path="forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="reset-password" element={<ResetPasswordPage />} />
+
         <Route element={<AppLayout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />

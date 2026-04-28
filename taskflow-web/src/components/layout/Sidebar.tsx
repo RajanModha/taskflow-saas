@@ -9,11 +9,12 @@ import {
   Users,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
+import { useMe } from '../../hooks/api/auth.hooks';
+import { useUnreadCount } from '../../hooks/api/notifications.hooks';
 import { cn } from '../../lib/utils';
+import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { Avatar } from '../ui/Avatar';
-
-const DEMO_UNREAD = 2;
 
 function NavItem({
   to,
@@ -94,8 +95,13 @@ export interface SidebarContentProps {
 
 export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarContentProps) {
   const { sidebarCollapsed } = useUIStore();
+  const storedUser = useAuthStore((state) => state.user);
+  const { data: me } = useMe();
+  const { data: unread } = useUnreadCount();
   const collapsed = forceExpanded ? false : sidebarCollapsed;
   const showSearchNav = collapsed && !forceExpanded;
+  const unreadCount = unread?.count ?? 0;
+  const displayName = me?.displayName ?? me?.userName ?? storedUser?.displayName ?? storedUser?.userName ?? 'User';
 
   return (
     <div className="flex h-full flex-col border-r border-neutral-200 bg-white">
@@ -133,7 +139,7 @@ export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarCon
                   }
                 >
                   <Bell className="h-4 w-4" />
-                  {DEMO_UNREAD > 0 ? (
+                  {unreadCount > 0 ? (
                     <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
                   ) : null}
                 </NavLink>
@@ -164,9 +170,9 @@ export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarCon
             >
               <Bell className="h-4 w-4 shrink-0" />
               Notifications
-              {DEMO_UNREAD > 0 ? (
+              {unreadCount > 0 ? (
                 <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
-                  {DEMO_UNREAD > 9 ? '9+' : DEMO_UNREAD}
+                  {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               ) : null}
             </NavLink>
@@ -209,7 +215,7 @@ export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarCon
             <Tooltip.Root>
               <Tooltip.Trigger asChild>
                 <div className="flex justify-center">
-                  <Avatar name="Alex Johnson" size="sm" />
+                  <Avatar name={displayName} size="sm" src={me?.avatarUrl ?? undefined} />
                 </div>
               </Tooltip.Trigger>
               <Tooltip.Portal>
@@ -218,7 +224,7 @@ export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarCon
                   sideOffset={8}
                   className="z-50 rounded bg-neutral-900 px-2 py-1 text-11 text-neutral-0 shadow-e200"
                 >
-                  Alex Johnson
+                  {displayName}
                   <Tooltip.Arrow className="fill-neutral-900" />
                 </Tooltip.Content>
               </Tooltip.Portal>
@@ -234,8 +240,8 @@ export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarCon
           </div>
         ) : (
           <div className="flex items-center gap-2 px-1">
-            <Avatar name="Alex Johnson" size="sm" />
-            <span className="min-w-0 flex-1 truncate text-13 font-medium text-neutral-800">Alex Johnson</span>
+            <Avatar name={displayName} size="sm" src={me?.avatarUrl ?? undefined} />
+            <span className="min-w-0 flex-1 truncate text-13 font-medium text-neutral-800">{displayName}</span>
             <NavLink
               to="/settings"
               onClick={onNavigate}

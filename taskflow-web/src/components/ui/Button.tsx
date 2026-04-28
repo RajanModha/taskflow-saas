@@ -30,11 +30,11 @@ const sizeClasses: Record<ButtonSize, string> = {
 };
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: 'bg-primary-600 text-white shadow-e100 hover:bg-primary-700 active:bg-primary-800',
+  primary: 'bg-primary-600 !text-white shadow-e100 hover:bg-primary-700 active:bg-primary-800',
   secondary: 'border border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50 active:bg-neutral-100',
   ghost: 'text-neutral-600 hover:bg-neutral-100 active:bg-neutral-150',
   subtle: 'bg-neutral-100 text-neutral-700 hover:bg-neutral-150',
-  danger: 'bg-red-600 text-white hover:bg-red-700',
+  danger: 'bg-red-600 !text-white hover:bg-red-700',
   'danger-ghost': 'text-red-600 hover:bg-red-50',
   link: 'h-auto p-0 text-primary-600 hover:text-primary-700 hover:underline',
 };

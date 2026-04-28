@@ -1,10 +1,11 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { Bell, ChevronRight, Menu, Search } from 'lucide-react';
+import { ChevronRight, Menu, Search } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import { useLogout, useMe } from '../../hooks/api/auth.hooks';
+import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { Avatar } from '../ui/Avatar';
-
-const DEMO_UNREAD = 2;
+import { NotificationBell } from './NotificationBell';
 
 const routeTitle: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -20,8 +21,24 @@ function breadcrumbLabel(pathname: string): string {
 
 export default function TopBar() {
   const { setMobileSidebar } = useUIStore();
+  const openCommandPalette = useUIStore((state) => state.openCommandPalette);
   const { pathname } = useLocation();
+  const { data: me } = useMe();
+  const logoutMutation = useLogout();
+  const refreshToken = useAuthStore((state) => state.refreshToken);
+  const logout = useAuthStore((state) => state.logout);
   const current = breadcrumbLabel(pathname);
+  const displayName = me?.displayName ?? me?.userName ?? 'User';
+
+  const onSignOut = async () => {
+    try {
+      if (refreshToken) {
+        await logoutMutation.mutateAsync({ refreshToken });
+      }
+    } finally {
+      logout();
+    }
+  };
 
   return (
     <header className="sticky top-0 z-10 flex h-topbar shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-4">
@@ -46,6 +63,7 @@ export default function TopBar() {
         <button
           type="button"
           className="flex h-[30px] w-full max-w-[320px] cursor-pointer items-center gap-2 rounded border border-neutral-200 bg-neutral-100 px-3 text-13 text-neutral-400 transition-colors hover:bg-neutral-150"
+          onClick={openCommandPalette}
         >
           <Search className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left">Search...</span>
@@ -56,16 +74,7 @@ export default function TopBar() {
       <div className="min-w-0 flex-1 sm:hidden" aria-hidden />
 
       <div className="flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          className="relative flex h-8 w-8 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100"
-          aria-label="Notifications"
-        >
-          <Bell className="h-4 w-4" />
-          {DEMO_UNREAD > 0 ? (
-            <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" aria-hidden />
-          ) : null}
-        </button>
+        <NotificationBell />
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
@@ -74,7 +83,7 @@ export default function TopBar() {
               className="flex h-8 w-8 items-center justify-center rounded outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
               aria-label="User menu"
             >
-              <Avatar name="Alex Johnson" size="sm" />
+              <Avatar name={displayName} size="sm" src={me?.avatarUrl ?? undefined} />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -83,14 +92,18 @@ export default function TopBar() {
               sideOffset={6}
               align="end"
             >
-              <DropdownMenu.Item className="cursor-pointer px-3 py-2 text-13 text-neutral-700 outline-none data-[highlighted]:bg-neutral-50">
-                View profile
+              <DropdownMenu.Label className="px-3 py-2 text-12 text-neutral-500">{displayName}</DropdownMenu.Label>
+              <DropdownMenu.Item asChild className="cursor-pointer px-3 py-2 text-13 text-neutral-700 outline-none data-[highlighted]:bg-neutral-50">
+                <Link to="/settings/profile">View profile</Link>
               </DropdownMenu.Item>
-              <DropdownMenu.Item className="cursor-pointer px-3 py-2 text-13 text-neutral-700 outline-none data-[highlighted]:bg-neutral-50">
-                Settings
+              <DropdownMenu.Item asChild className="cursor-pointer px-3 py-2 text-13 text-neutral-700 outline-none data-[highlighted]:bg-neutral-50">
+                <Link to="/settings">Settings</Link>
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="my-1 h-px bg-neutral-150" />
-              <DropdownMenu.Item className="cursor-pointer px-3 py-2 text-13 text-red-600 outline-none data-[highlighted]:bg-red-50">
+              <DropdownMenu.Item
+                onSelect={onSignOut}
+                className="cursor-pointer px-3 py-2 text-13 text-red-600 outline-none data-[highlighted]:bg-red-50"
+              >
                 Sign out
               </DropdownMenu.Item>
             </DropdownMenu.Content>

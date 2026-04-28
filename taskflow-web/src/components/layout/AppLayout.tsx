@@ -3,11 +3,13 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Outlet } from 'react-router-dom';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useUIStore } from '../../stores/uiStore';
+import { TaskDetailSlideOver } from '../tasks/TaskDetailSlideOver';
+import { CommandPalette } from './CommandPalette';
 import Sidebar, { SidebarContent } from './Sidebar';
 import TopBar from './TopBar';
 
 export default function AppLayout() {
-  const { sidebarCollapsed, mobileSidebarOpen, setMobileSidebar } = useUIStore();
+  const { sidebarCollapsed, mobileSidebarOpen, setMobileSidebar, taskSlideOverTaskId, closeTaskSlideOver } = useUIStore();
   const isLg = useMediaQuery('(min-width: 1024px)');
   const sidebarW = sidebarCollapsed ? 48 : 220;
 
@@ -48,6 +50,8 @@ export default function AppLayout() {
             <Outlet />
           </main>
         </div>
+        <CommandPalette />
+        <TaskDetailSlideOver taskId={taskSlideOverTaskId} onClose={closeTaskSlideOver} />
       </div>
     </Tooltip.Provider>
   );
