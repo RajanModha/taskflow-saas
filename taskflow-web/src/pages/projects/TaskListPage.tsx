@@ -76,7 +76,7 @@ export default function TaskListPage() {
 
   const getParam = (key: string) => searchParams.get(key) ?? undefined;
   const [searchInput, setSearchInput] = useState(getParam('q') ?? '');
-  const [debouncedQ] = useDebounce(searchInput, 300);
+  const debouncedQ = useDebounce(searchInput, 300);
 
   const setParam = (key: string, value?: string) => {
     const next = new URLSearchParams(searchParams);

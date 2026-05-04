@@ -53,7 +53,7 @@ function ProjectRowMenu({ onDelete }: { onDelete: () => void }) {
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const [q, setQ] = useState('');
-  const [debouncedQ] = useDebounce(q, 300);
+  const debouncedQ = useDebounce(q, 300);
   const [sortBy, setSortBy] = useState('createdAtUtc');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [view, setView] = useState<'list' | 'grid'>(() => (localStorage.getItem('project-view') as 'list' | 'grid') ?? 'list');

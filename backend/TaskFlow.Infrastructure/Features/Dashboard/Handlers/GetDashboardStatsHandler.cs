@@ -1,3 +1,4 @@
+using Dapper;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -9,6 +10,7 @@ using TaskFlow.Application.Tenancy;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Infrastructure.Persistence.Sql;
 using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.Infrastructure.Features.Dashboard.Handlers;
@@ -217,22 +219,24 @@ public sealed class GetDashboardStatsHandler(
         var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var monthEnd = monthStart.AddMonths(1);
 
-        var contributorRows = await dbContext.Database
-            .SqlQuery<ContributorAggRow>(
-                $"""
-                 SELECT a."ActorId" AS "{nameof(ContributorAggRow.ActorId)}", COUNT(*)::int AS "{nameof(ContributorAggRow.TasksCompleted)}"
-                 FROM "ActivityLogs" AS a
-                 WHERE a."OrganizationId" = {organizationId}
-                   AND a."Action" = {ActivityActions.TaskStatusChanged}
-                   AND a."Metadata" IS NOT NULL
-                   AND (a."Metadata"::jsonb ->> 'to') = 'Done'
-                   AND a."OccurredAtUtc" >= {monthStart}
-                   AND a."OccurredAtUtc" < {monthEnd}
-                 GROUP BY a."ActorId"
-                 ORDER BY COUNT(*) DESC
-                 LIMIT 5
-                 """)
-            .ToListAsync(cancellationToken);
+        var sql = RawSqlQueryProvider.GetByKey("dashboard.top_contributors.monthly");
+        var connection = dbContext.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        var contributorRows = (await connection.QueryAsync<ContributorAggRow>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    OrganizationId = organizationId,
+                    TaskStatusChangedAction = ActivityActions.TaskStatusChanged,
+                    MonthStart = monthStart,
+                    MonthEnd = monthEnd
+                },
+                cancellationToken: cancellationToken))).ToList();
 
         var contributorIds = contributorRows.Select(r => r.ActorId).ToList();
         var contributorUsers = await dbContext.Users.AsNoTracking()

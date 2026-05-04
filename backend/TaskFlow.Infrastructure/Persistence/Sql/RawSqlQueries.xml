@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<queries>
+  <query key="dashboard.top_contributors.monthly"><![CDATA[
+SELECT a."ActorId" AS "ActorId", COUNT(*)::int AS "TasksCompleted"
+FROM "ActivityLogs" AS a
+WHERE a."OrganizationId" = @OrganizationId
+  AND a."Action" = @TaskStatusChangedAction
+  AND a."Metadata" IS NOT NULL
+  AND (a."Metadata"::jsonb ->> 'to') = 'Done'
+  AND a."OccurredAtUtc" >= @MonthStart
+  AND a."OccurredAtUtc" < @MonthEnd
+GROUP BY a."ActorId"
+ORDER BY COUNT(*) DESC
+LIMIT 5
+  ]]></query>
+</queries>

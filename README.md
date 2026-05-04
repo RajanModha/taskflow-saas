@@ -99,7 +99,7 @@ Services and URLs:
 - Backend via frontend proxy: `http://localhost:5173/api`
 - PostgreSQL: `localhost:5432`
 
-On first startup, the app applies migrations and seeds rich demo data automatically (configured in `.env` / `Seed` settings).
+On first startup, the app applies migrations and seeds rich sample workspace data automatically (configured in `.env` / `Seed` settings).
 
 Stop services:
 
@@ -172,33 +172,38 @@ Resend setup:
 4. Run API and trigger email flow
 
 
-## Demo Credentials (Client Walkthrough)
+## Seeded Credentials (Client Walkthrough)
 
 Use these accounts after seeding:
 
 - Platform admin:
   - Email / Username: `admin@taskflow.local`
   - Password: `Admin123!` (local settings) or your configured `SEED_ADMIN_PASSWORD` in Docker
-- Demo tenant users:
-  - Email / Username pattern: `demo.user001@taskflow.local` through `demo.user060@taskflow.local`
+- Seeded workspace users:
+  - Email pattern: `<firstname>.<lastname>.<orgIndex><memberIndex>@taskflow.local`
+    - Example: `jessica.demars.0101@taskflow.local` (org 01, member 01)
+  - Username pattern: same as email local-part (without `@taskflow.local`)
   - Password: `Demo123!` (or your configured `SEED_DEMO_USER_PASSWORD`)
   - Quick login examples:
-    - `demo.user001@taskflow.local` / `Demo123!`
-    - `demo.user002@taskflow.local` / `Demo123!`
-    - `demo.user003@taskflow.local` / `Demo123!`
-    - `demo.user010@taskflow.local` / `Demo123!`
-    - `demo.user015@taskflow.local` / `Demo123!`
-    - `demo.user020@taskflow.local` / `Demo123!`
-    - `demo.user030@taskflow.local` / `Demo123!`
-    - `demo.user040@taskflow.local` / `Demo123!`
-    - `demo.user050@taskflow.local` / `Demo123!`
-    - `demo.user060@taskflow.local` / `Demo123!`
+    - `jessica.demars.0101@taskflow.local` / `Demo123!`
+    - `ethan.brooks.0102@taskflow.local` / `Demo123!`
+    - `priya.nair.0103@taskflow.local` / `Demo123!`
+    - `mateo.silva.0104@taskflow.local` / `Demo123!`
+    - `hannah.kim.0105@taskflow.local` / `Demo123!`
+    - `marcus.reed.0201@taskflow.local` / `Demo123!`
+    - `ava.patel.0202@taskflow.local` / `Demo123!`
+    - `noah.bennett.0203@taskflow.local` / `Demo123!`
+    - `chloe.fischer.0204@taskflow.local` / `Demo123!`
+    - `daniel.santos.0205@taskflow.local` / `Demo123!`
 
 Seed defaults generate at least:
 - 12 organizations
 - 60 users
 - 72 projects
 - 576 tasks
+- realistic status/priority distribution (backlog, todo, in-progress, done, cancelled)
+- due-date mix (overdue, due soon, upcoming, and no-date tasks)
+- seeded tags, milestones, checklist items, comments, and activity logs for richer dashboards
 
 ## Suggested Portfolio Screenshots
 
