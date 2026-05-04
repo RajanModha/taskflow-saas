@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { useMe } from '../hooks/api/auth.hooks';
 import { cn } from '../lib/utils';
 
 function NavItem({ to, label }: { to: string; label: string }) {
@@ -19,6 +20,9 @@ function NavItem({ to, label }: { to: string; label: string }) {
 }
 
 export default function SettingsLayout() {
+  const { data: me } = useMe();
+  const isAdmin = ['Owner', 'Admin'].includes(me?.role ?? '');
+
   return (
     <div className="flex h-full">
       <nav className="w-[180px] flex-shrink-0 border-r border-neutral-200 bg-white p-4">
@@ -33,6 +37,7 @@ export default function SettingsLayout() {
         <NavItem to="/settings/tags" label="Tags" />
         <NavItem to="/settings/webhooks" label="Webhooks" />
         <NavItem to="/settings/templates" label="Templates" />
+        {isAdmin ? <NavItem to="/trash" label="Trash" /> : null}
       </nav>
 
       <div className="flex-1 overflow-y-auto p-6">

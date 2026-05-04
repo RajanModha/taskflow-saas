@@ -1,12 +1,19 @@
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Abstractions;
-using TaskFlow.Application.Tasks;
+using TaskFlow.Application.Tenancy;
+using TaskFlow.Domain.Common;
+using TaskFlow.Domain.Repositories;
+using TaskFlow.Infrastructure.Features.Tasks;
 using DomainTask = TaskFlow.Domain.Entities.Task;
+using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.Infrastructure.Persistence;
 
-public sealed class TaskRepository(TaskFlowDbContext dbContext, ICurrentUser currentUser) : ITaskRepository
+public sealed class TaskRepository(
+    TaskFlowDbContext dbContext,
+    ICurrentUser currentUser,
+    ICurrentTenant currentTenant) : ITaskRepository
 {
     public Task<long> GetExportCountAsync(TaskExportFilters filters, CancellationToken cancellationToken) =>
         BuildFilteredQuery(filters).LongCountAsync(cancellationToken);
@@ -49,6 +56,147 @@ public sealed class TaskRepository(TaskFlowDbContext dbContext, ICurrentUser cur
         {
             yield return task;
         }
+    }
+
+    public async System.Threading.Tasks.Task<PagedResult<DomainTask>> GetPagedTasksAsync(
+        TaskListCriteria criteria,
+        CancellationToken cancellationToken)
+    {
+        var page = criteria.Page < 1 ? 1 : criteria.Page;
+        var pageSize = criteria.PageSize is < 1 or > 100 ? 20 : criteria.PageSize;
+        if (!currentTenant.IsSet || criteria.ForceEmptyResult)
+        {
+            return new PagedResult<DomainTask>([], page, pageSize, 0);
+        }
+
+        var skip = (page - 1) * pageSize;
+
+        var query = dbContext.Tasks.AsNoTracking().AsQueryable();
+        if (criteria.IncludeDeleted)
+        {
+            query = query.IgnoreQueryFilters();
+        }
+
+        if (criteria.DeletedOnly)
+        {
+            query = query.Where(t => t.IsDeleted);
+        }
+
+        if (criteria.ProjectId.HasValue)
+        {
+            query = query.Where(t => t.ProjectId == criteria.ProjectId.Value);
+        }
+
+        if (criteria.Status.HasValue)
+        {
+            query = query.Where(t => t.Status == criteria.Status.Value);
+        }
+
+        if (criteria.Priority.HasValue)
+        {
+            query = query.Where(t => t.Priority == criteria.Priority.Value);
+        }
+
+        if (criteria.DueFromUtc.HasValue)
+        {
+            query = query.Where(t => t.DueDateUtc.HasValue && t.DueDateUtc.Value >= criteria.DueFromUtc.Value);
+        }
+
+        if (criteria.DueToUtc.HasValue)
+        {
+            query = query.Where(t => t.DueDateUtc.HasValue && t.DueDateUtc.Value <= criteria.DueToUtc.Value);
+        }
+
+        if (criteria.AssigneeId.HasValue)
+        {
+            query = query.Where(t => t.AssigneeId == criteria.AssigneeId.Value);
+        }
+
+        if (criteria.TagId.HasValue)
+        {
+            var tagId = criteria.TagId.Value;
+            query = query.Where(t => dbContext.TaskTags.Any(tt => tt.TaskId == t.Id && tt.TagId == tagId));
+        }
+
+        if (criteria.MilestoneId.HasValue)
+        {
+            query = query.Where(t => t.MilestoneId == criteria.MilestoneId.Value);
+        }
+
+        if (criteria.IsBlocked == true)
+        {
+            query = query.Where(t =>
+                dbContext.TaskDependencies.Any(d =>
+                    d.BlockedTaskId == t.Id &&
+                    dbContext.Tasks.Any(b =>
+                        b.Id == d.BlockingTaskId
+                        && b.Status != DomainTaskStatus.Done
+                        && b.Status != DomainTaskStatus.Cancelled)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(criteria.Q))
+        {
+            var q = criteria.Q.Trim();
+            query = query.Where(t => t.Title.Contains(q));
+        }
+
+        var sortBy = criteria.SortBy?.Trim().ToLowerInvariant();
+
+        query = sortBy switch
+        {
+            "duedateutc" => criteria.SortDesc
+                ? query.OrderByDescending(t => t.DueDateUtc ?? DateTime.MaxValue)
+                : query.OrderBy(t => t.DueDateUtc ?? DateTime.MaxValue),
+            "priority" => criteria.SortDesc
+                ? query.OrderByDescending(t => (int)t.Priority)
+                : query.OrderBy(t => (int)t.Priority),
+            "status" => criteria.SortDesc
+                ? query.OrderByDescending(t => (int)t.Status)
+                : query.OrderBy(t => (int)t.Status),
+            "createdatutc" or null or "" => criteria.SortDesc
+                ? query.OrderByDescending(t => t.CreatedAtUtc)
+                : query.OrderBy(t => t.CreatedAtUtc),
+            _ => criteria.SortDesc
+                ? query.OrderByDescending(t => t.CreatedAtUtc)
+                : query.OrderBy(t => t.CreatedAtUtc),
+        };
+
+        var total = await query.LongCountAsync(cancellationToken);
+        var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
+        return new PagedResult<DomainTask>(items, page, pageSize, total);
+    }
+
+    public async System.Threading.Tasks.Task<DomainTask?> GetDetachedTaskByIdAsync(
+        Guid taskId,
+        CancellationToken cancellationToken) =>
+        await TaskTenantGuard.GetTaskInCurrentTenantAsync(dbContext, currentTenant, taskId, cancellationToken);
+
+    public async System.Threading.Tasks.Task<PagedResult<DomainTask>> GetPagedOverdueTasksAsync(
+        OverdueTaskListCriteria criteria,
+        CancellationToken cancellationToken)
+    {
+        var page = criteria.Page < 1 ? 1 : criteria.Page;
+        var pageSize = criteria.PageSize is < 1 or > 100 ? 20 : criteria.PageSize;
+        if (!currentTenant.IsSet)
+        {
+            return new PagedResult<DomainTask>([], page, pageSize, 0);
+        }
+
+        var skip = (page - 1) * pageSize;
+        var now = DateTime.UtcNow;
+
+        var query = dbContext.Tasks
+            .AsNoTracking()
+            .Where(t =>
+                t.DueDateUtc.HasValue &&
+                t.DueDateUtc < now &&
+                t.Status != DomainTaskStatus.Done &&
+                t.Status != DomainTaskStatus.Cancelled)
+            .OrderBy(t => t.DueDateUtc);
+
+        var total = await query.LongCountAsync(cancellationToken);
+        var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
+        return new PagedResult<DomainTask>(items, page, pageSize, total);
     }
 
     private IQueryable<DomainTask> BuildFilteredQuery(TaskExportFilters filters)

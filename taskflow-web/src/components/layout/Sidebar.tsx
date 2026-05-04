@@ -1,5 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
+  AlertCircle,
   Bell,
   ChevronLeft,
   FolderOpen,
@@ -11,6 +12,7 @@ import {
 import { NavLink } from 'react-router-dom';
 import { useMe } from '../../hooks/api/auth.hooks';
 import { useUnreadCount } from '../../hooks/api/notifications.hooks';
+import { useOverdueTasks } from '../../hooks/api/tasks.hooks';
 import { cn } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -98,9 +100,11 @@ export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarCon
   const storedUser = useAuthStore((state) => state.user);
   const { data: me } = useMe();
   const { data: unread } = useUnreadCount();
+  const { data: overdueTasks } = useOverdueTasks({ page: 1, pageSize: 1 });
   const collapsed = forceExpanded ? false : sidebarCollapsed;
   const showSearchNav = collapsed && !forceExpanded;
   const unreadCount = unread?.count ?? 0;
+  const overdueCount = overdueTasks?.totalCount ?? 0;
   const displayName = me?.displayName ?? me?.userName ?? storedUser?.displayName ?? storedUser?.userName ?? 'User';
 
   return (
@@ -173,6 +177,63 @@ export function SidebarContent({ forceExpanded = false, onNavigate }: SidebarCon
               {unreadCount > 0 ? (
                 <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
                   {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              ) : null}
+            </NavLink>
+          )}
+        </div>
+        <div className="mb-0.5">
+          {collapsed ? (
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <NavLink
+                  to="/overdue"
+                  onClick={onNavigate}
+                  className={({ isActive }) =>
+                    cn(
+                      'relative mx-auto flex h-8 w-8 items-center justify-center rounded',
+                      isActive
+                        ? 'bg-primary-50 text-primary-700'
+                        : overdueCount > 0
+                          ? 'text-red-600 hover:bg-red-50 hover:text-red-700'
+                          : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800',
+                    )
+                  }
+                >
+                  <AlertCircle className="h-4 w-4" />
+                </NavLink>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content
+                  side="right"
+                  sideOffset={8}
+                  className="z-50 rounded bg-neutral-900 px-2 py-1 text-11 text-neutral-0 shadow-e200"
+                >
+                  Overdue
+                  <Tooltip.Arrow className="fill-neutral-900" />
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          ) : (
+            <NavLink
+              to="/overdue"
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  'relative mx-2 flex h-8 items-center gap-2.5 rounded px-3 text-13',
+                  isActive
+                    ? 'bg-primary-50 font-medium text-primary-700'
+                    : overdueCount > 0
+                      ? 'text-red-600 hover:bg-red-50 hover:text-red-700'
+                      : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800',
+                )
+              }
+            >
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              Overdue
+              {overdueCount > 0 ? (
+                <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-red-100 px-1 text-[10px] font-semibold text-red-700">
+                  {overdueCount > 99 ? '99+' : overdueCount}
                 </span>
               ) : null}
             </NavLink>

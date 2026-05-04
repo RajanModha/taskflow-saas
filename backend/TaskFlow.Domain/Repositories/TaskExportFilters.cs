@@ -1,7 +1,7 @@
 using DomainTaskPriority = TaskFlow.Domain.Entities.TaskPriority;
 using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
-namespace TaskFlow.Application.Tasks;
+namespace TaskFlow.Domain.Repositories;
 
 public sealed record TaskExportFilters(
     Guid? ProjectId,

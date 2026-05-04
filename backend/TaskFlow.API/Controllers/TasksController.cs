@@ -11,6 +11,7 @@ using TaskFlow.Application.Auth;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Application.Workspaces;
 using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 using TaskPriority = TaskFlow.Domain.Entities.TaskPriority;
@@ -77,11 +78,18 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
         [FromQuery] Guid? milestoneId = null,
         [FromQuery] bool? isBlocked = null,
         [FromQuery] bool includeDeleted = false,
+        [FromQuery] bool deletedOnly = false,
         CancellationToken cancellationToken = default)
     {
         if (includeDeleted && !IsAdminPlus())
         {
             return Forbid();
+        }
+
+        if (deletedOnly && !includeDeleted)
+        {
+            ModelState.AddModelError(nameof(deletedOnly), "deletedOnly requires includeDeleted=true.");
+            return ValidationProblem(ModelState);
         }
 
         var sortDesc = string.Equals(sortDir, "desc", StringComparison.OrdinalIgnoreCase);
@@ -127,7 +135,8 @@ public sealed class TasksController(IMediator mediator, ITaskRepository taskRepo
                 tagId,
                 milestoneId,
                 isBlocked,
-                includeDeleted),
+                includeDeleted,
+                deletedOnly),
             cancellationToken);
 
         return Ok(result);

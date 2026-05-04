@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Outlet } from 'react-router-dom';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { useUIStore } from '../../stores/uiStore';
+import { NetworkOfflineBanner } from '../NetworkOfflineBanner';
 import { TaskDetailSlideOver } from '../tasks/TaskDetailSlideOver';
 import { CommandPalette } from './CommandPalette';
 import Sidebar, { SidebarContent } from './Sidebar';
@@ -16,6 +17,7 @@ export default function AppLayout() {
   return (
     <Tooltip.Provider delayDuration={200}>
       <div className="flex h-screen overflow-hidden bg-surface-page">
+        <NetworkOfflineBanner />
         <Sidebar />
 
         <AnimatePresence>

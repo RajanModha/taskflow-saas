@@ -121,7 +121,8 @@ public sealed record GetTasksQuery(
     Guid? TagId,
     Guid? MilestoneId,
     bool? IsBlocked,
-    bool IncludeDeleted) : IRequest<PagedResultDto<TaskDto>>;
+    bool IncludeDeleted,
+    bool DeletedOnly) : IRequest<PagedResultDto<TaskDto>>;
 
 public sealed record AssignTaskCommand(Guid TaskId, Guid? AssigneeId) : IRequest<TaskDto?>;
 

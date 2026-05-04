@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import api from '../../lib/api';
 import type {
   AssignTaskRequest,
@@ -122,12 +123,22 @@ export function useDeleteTask() {
 export function useRestoreTask() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (taskId: string) => {
-      await api.post(`/Tasks/${taskId}/restore`);
-    },
+    mutationFn: (taskId: string) => api.post(`/Tasks/${taskId}/restore`).then((response) => response.data as TaskDto),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['board'] });
+      queryClient.invalidateQueries({ queryKey: ['trash'] });
+      toast.success('Task restored successfully');
+    },
+  });
+}
+
+export function usePermanentDeleteTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => api.delete(`/Tasks/${taskId}/permanent`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['trash'] });
+      toast.success('Task permanently deleted');
     },
   });
 }
@@ -154,6 +165,18 @@ export function useOverdueTasks(params: Omit<TasksQueryParams, 'includeDeleted'>
       const { data } = await api.get<TaskDtoPagedResultDto>('/Tasks/overdue', { params });
       return data;
     },
+  });
+}
+
+export function useDeletedTasks(params: { page: number; pageSize: number; projectId?: string }) {
+  return useQuery({
+    queryKey: ['trash', params],
+    queryFn: () =>
+      api
+        .get('/Tasks', {
+          params: { ...params, includeDeleted: true, deletedOnly: true },
+        })
+        .then((response) => response.data as TaskDtoPagedResultDto),
   });
 }
 

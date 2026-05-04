@@ -1,125 +1,53 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
-using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
-using TaskFlow.Infrastructure.Features.Tasks;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class GetTasksHandler(
-    TaskFlowDbContext dbContext,
+    ITaskRepository taskRepository,
+    ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser) : IRequestHandler<GetTasksQuery, PagedResultDto<TaskDto>>
 {
     public async System.Threading.Tasks.Task<PagedResultDto<TaskDto>> Handle(GetTasksQuery request, CancellationToken cancellationToken)
     {
-        var page = request.Page < 1 ? 1 : request.Page;
-        var pageSize = request.PageSize is < 1 or > 100 ? 20 : request.PageSize;
-        var skip = (page - 1) * pageSize;
-
-        var query = dbContext.Tasks.AsNoTracking().AsQueryable();
-        if (request.IncludeDeleted)
-        {
-            query = query.IgnoreQueryFilters();
-        }
-
-        if (request.ProjectId.HasValue)
-        {
-            query = query.Where(t => t.ProjectId == request.ProjectId.Value);
-        }
-
-        if (request.Status.HasValue)
-        {
-            query = query.Where(t => t.Status == request.Status.Value);
-        }
-
-        if (request.Priority.HasValue)
-        {
-            query = query.Where(t => t.Priority == request.Priority.Value);
-        }
-
-        if (request.DueFromUtc.HasValue)
-        {
-            query = query.Where(t => t.DueDateUtc.HasValue && t.DueDateUtc.Value >= request.DueFromUtc.Value);
-        }
-
-        if (request.DueToUtc.HasValue)
-        {
-            query = query.Where(t => t.DueDateUtc.HasValue && t.DueDateUtc.Value <= request.DueToUtc.Value);
-        }
-
+        var assigneeId = request.AssigneeId;
+        var forceEmptyResult = false;
         if (request.AssignedToMe == true)
         {
             if (currentUser.UserId is { } me)
             {
-                query = query.Where(t => t.AssigneeId == me);
+                assigneeId = me;
             }
             else
             {
-                query = query.Where(_ => false);
+                forceEmptyResult = true;
             }
         }
 
-        if (request.AssigneeId.HasValue)
-        {
-            query = query.Where(t => t.AssigneeId == request.AssigneeId.Value);
-        }
+        var criteria = new TaskListCriteria(
+            request.Page,
+            request.PageSize,
+            request.ProjectId,
+            request.Status,
+            request.Priority,
+            request.DueFromUtc,
+            request.DueToUtc,
+            request.Q,
+            request.SortBy,
+            request.SortDesc,
+            assigneeId,
+            request.TagId,
+            request.MilestoneId,
+            request.IsBlocked,
+            request.IncludeDeleted,
+            request.DeletedOnly,
+            forceEmptyResult);
 
-        if (request.TagId.HasValue)
-        {
-            var tagId = request.TagId.Value;
-            query = query.Where(t => dbContext.TaskTags.Any(tt => tt.TaskId == t.Id && tt.TagId == tagId));
-        }
-
-        if (request.MilestoneId.HasValue)
-        {
-            query = query.Where(t => t.MilestoneId == request.MilestoneId.Value);
-        }
-
-        if (request.IsBlocked == true)
-        {
-            query = query.Where(t =>
-                dbContext.TaskDependencies.Any(d =>
-                    d.BlockedTaskId == t.Id &&
-                    dbContext.Tasks.Any(b =>
-                        b.Id == d.BlockingTaskId
-                        && b.Status != DomainTaskStatus.Done
-                        && b.Status != DomainTaskStatus.Cancelled)));
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Q))
-        {
-            var q = request.Q.Trim();
-            query = query.Where(t => t.Title.Contains(q));
-        }
-
-        var sortBy = request.SortBy?.Trim().ToLowerInvariant();
-
-        query = sortBy switch
-        {
-            "duedateutc" => request.SortDesc
-                ? query.OrderByDescending(t => t.DueDateUtc ?? DateTime.MaxValue)
-                : query.OrderBy(t => t.DueDateUtc ?? DateTime.MaxValue),
-            "priority" => request.SortDesc
-                ? query.OrderByDescending(t => (int)t.Priority)
-                : query.OrderBy(t => (int)t.Priority),
-            "status" => request.SortDesc
-                ? query.OrderByDescending(t => (int)t.Status)
-                : query.OrderBy(t => (int)t.Status),
-            "createdatutc" or null or "" => request.SortDesc
-                ? query.OrderByDescending(t => t.CreatedAtUtc)
-                : query.OrderBy(t => t.CreatedAtUtc),
-            _ => request.SortDesc
-                ? query.OrderByDescending(t => t.CreatedAtUtc)
-                : query.OrderBy(t => t.CreatedAtUtc),
-        };
-
-        var total = await query.LongCountAsync(cancellationToken);
-        var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
-
-        var mapped = await TaskProjection.ToDtosAsync(dbContext, items, cancellationToken);
-        return PagedResultDto<TaskDto>.Create(mapped, page, pageSize, total);
+        var paged = await taskRepository.GetPagedTasksAsync(criteria, cancellationToken);
+        var dtos = await taskReadModelAssembler.ToTaskDtosAsync(paged.Items, cancellationToken);
+        return PagedResultDto<TaskDto>.Create(dtos, paged.Page, paged.PageSize, paged.TotalCount);
     }
 }

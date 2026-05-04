@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using System.Linq.Expressions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Domain.Entities;
@@ -9,6 +10,7 @@ namespace TaskFlow.Infrastructure.Persistence;
 
 public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, Guid>
 {
+    private const int MaxSaveRetries = 3;
     private readonly ICurrentTenant _currentTenant;
 
     public DbSet<Organization> Organizations => Set<Organization>();
@@ -518,6 +520,44 @@ public sealed class TaskFlowDbContext : IdentityDbContext<ApplicationUser, Appli
                 .HasQueryFilter(Expression.Lambda(combinedBody, parameter));
         }
     }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess) =>
+        throw new NotSupportedException("Synchronous SaveChanges is disabled. Use SaveChangesAsync.");
+
+    public override async System.Threading.Tasks.Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        => await SaveChangesAsync(acceptAllChangesOnSuccess: true, cancellationToken);
+
+    public override async Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            }
+            catch (Exception ex) when (attempt < MaxSaveRetries && IsTransientSerializationFailure(ex))
+            {
+                await System.Threading.Tasks.Task.Delay(GetRetryDelay(attempt), cancellationToken);
+            }
+        }
+    }
+
+    private static bool IsTransientSerializationFailure(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException pg && (pg.SqlState == "40001" || pg.SqlState == "40P01"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static TimeSpan GetRetryDelay(int attempt) => TimeSpan.FromMilliseconds(50 * Math.Pow(2, attempt - 1));
 
     private sealed class ReplaceParameterVisitor(ParameterExpression source, ParameterExpression target)
         : ExpressionVisitor

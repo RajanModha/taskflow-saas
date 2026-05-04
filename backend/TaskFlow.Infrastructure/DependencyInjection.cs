@@ -16,6 +16,8 @@ using TaskFlow.Infrastructure.Projects;
 using TaskFlow.Infrastructure.Tenancy;
 using TaskFlow.Infrastructure.Notifications;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Domain.Repositories;
+using TaskFlow.Infrastructure.Features.Tasks;
 using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Infrastructure.Services;
 using TaskFlow.Infrastructure.Webhooks;
@@ -48,6 +50,7 @@ public static class DependencyInjection
             options.UseNpgsql(connectionString));
 
         services.AddScoped<ITaskRepository, TaskRepository>();
+        services.AddScoped<ITaskReadModelAssembler, EfTaskReadModelAssembler>();
 
         services
             .AddIdentity<ApplicationUser, ApplicationRole>(options =>
