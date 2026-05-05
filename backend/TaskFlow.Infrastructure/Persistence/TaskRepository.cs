@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
+using TaskFlow.Application.Activity;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Domain.Common;
@@ -197,6 +198,164 @@ public sealed class TaskRepository(
         var total = await query.LongCountAsync(cancellationToken);
         var items = await query.Skip(skip).Take(pageSize).ToListAsync(cancellationToken);
         return new PagedResult<DomainTask>(items, page, pageSize, total);
+    }
+
+    public async System.Threading.Tasks.Task<PagedResult<TaskCommentReadModel>?> GetPagedTaskCommentsAsync(
+        Guid taskId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(dbContext, currentTenant, taskId, cancellationToken);
+        if (task is null)
+        {
+            return null;
+        }
+
+        page = page < 1 ? 1 : page;
+        pageSize = pageSize is < 1 or > 100 ? 20 : pageSize;
+        var skip = (page - 1) * pageSize;
+
+        var baseQuery = dbContext.Comments
+            .AsNoTracking()
+            .Where(c => c.TaskId == taskId);
+
+        var total = await baseQuery.LongCountAsync(cancellationToken);
+        var rows = await baseQuery
+            .OrderBy(c => c.CreatedAtUtc)
+            .Skip(skip)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        var authorIds = rows.Where(c => !c.IsDeleted).Select(c => c.AuthorId).Distinct().ToList();
+        var authors = authorIds.Count == 0
+            ? new Dictionary<Guid, (string? UserName, string? DisplayName)>()
+            : await dbContext.Users
+                .AsNoTracking()
+                .Where(u => authorIds.Contains(u.Id))
+                .ToDictionaryAsync(
+                    u => u.Id,
+                    u => (u.UserName, u.DisplayName),
+                    cancellationToken);
+
+        var items = rows
+            .Select(c =>
+            {
+                if (c.IsDeleted || !authors.TryGetValue(c.AuthorId, out var author))
+                {
+                    return new TaskCommentReadModel(
+                        c.Id,
+                        c.Content,
+                        c.IsEdited,
+                        c.CreatedAtUtc,
+                        c.UpdatedAtUtc,
+                        c.IsDeleted,
+                        null,
+                        null,
+                        null);
+                }
+
+                return new TaskCommentReadModel(
+                    c.Id,
+                    c.Content,
+                    c.IsEdited,
+                    c.CreatedAtUtc,
+                    c.UpdatedAtUtc,
+                    c.IsDeleted,
+                    c.AuthorId,
+                    author.UserName,
+                    author.DisplayName);
+            })
+            .ToList();
+
+        return new PagedResult<TaskCommentReadModel>(items, page, pageSize, total);
+    }
+
+    public async System.Threading.Tasks.Task<IReadOnlyList<TaskChecklistItemReadModel>?> GetTaskChecklistAsync(
+        Guid taskId,
+        CancellationToken cancellationToken)
+    {
+        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(dbContext, currentTenant, taskId, cancellationToken);
+        if (task is null)
+        {
+            return null;
+        }
+
+        var rows = await dbContext.ChecklistItems
+            .AsNoTracking()
+            .Where(c => c.TaskId == taskId)
+            .OrderBy(c => c.Order)
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(c => new TaskChecklistItemReadModel(
+                c.Id,
+                c.Title,
+                c.IsCompleted,
+                c.Order,
+                c.CompletedAtUtc))
+            .ToList();
+    }
+
+    public async System.Threading.Tasks.Task<PagedResult<TaskFlow.Domain.Entities.ActivityLog>?> GetPagedTaskActivityAsync(
+        Guid taskId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(dbContext, currentTenant, taskId, cancellationToken);
+        if (task is null)
+        {
+            return null;
+        }
+
+        page = page < 1 ? 1 : page;
+        pageSize = pageSize is < 1 or > 100 ? 20 : pageSize;
+        var skip = (page - 1) * pageSize;
+
+        var query = dbContext.ActivityLogs
+            .AsNoTracking()
+            .Where(a => a.EntityType == ActivityEntityTypes.Task && a.EntityId == taskId);
+
+        var total = await query.LongCountAsync(cancellationToken);
+        var rows = await query
+            .OrderByDescending(a => a.OccurredAtUtc)
+            .Skip(skip)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new PagedResult<TaskFlow.Domain.Entities.ActivityLog>(rows, page, pageSize, total);
+    }
+
+    public async System.Threading.Tasks.Task<TaskDependenciesReadModel?> GetTaskDependenciesAsync(
+        Guid taskId,
+        CancellationToken cancellationToken)
+    {
+        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(dbContext, currentTenant, taskId, cancellationToken);
+        if (task is null)
+        {
+            return null;
+        }
+
+        var blockedByRows = await (
+                from d in dbContext.TaskDependencies.AsNoTracking()
+                join b in dbContext.Tasks.AsNoTracking() on d.BlockingTaskId equals b.Id
+                where d.BlockedTaskId == taskId
+                select new TaskBlockingSummaryReadModel(b.Id, b.Title, b.Status))
+            .ToListAsync(cancellationToken);
+
+        var blockedIds = await dbContext.TaskDependencies
+            .AsNoTracking()
+            .Where(d => d.BlockingTaskId == taskId)
+            .Select(d => d.BlockedTaskId)
+            .ToListAsync(cancellationToken);
+
+        var blockingRows = await dbContext.Tasks
+            .AsNoTracking()
+            .Where(t => blockedIds.Contains(t.Id))
+            .Select(t => new TaskBlockingSummaryReadModel(t.Id, t.Title, t.Status))
+            .ToListAsync(cancellationToken);
+
+        return new TaskDependenciesReadModel(task.Id, task.Title, task.Status, blockedByRows, blockingRows);
     }
 
     private IQueryable<DomainTask> BuildFilteredQuery(TaskExportFilters filters)

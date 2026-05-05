@@ -35,4 +35,24 @@ public interface ITaskRepository
     System.Threading.Tasks.Task<PagedResult<DomainTask>> GetPagedOverdueTasksAsync(
         OverdueTaskListCriteria criteria,
         CancellationToken cancellationToken);
+
+    System.Threading.Tasks.Task<PagedResult<TaskCommentReadModel>?> GetPagedTaskCommentsAsync(
+        Guid taskId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    System.Threading.Tasks.Task<IReadOnlyList<TaskChecklistItemReadModel>?> GetTaskChecklistAsync(
+        Guid taskId,
+        CancellationToken cancellationToken);
+
+    System.Threading.Tasks.Task<PagedResult<TaskFlow.Domain.Entities.ActivityLog>?> GetPagedTaskActivityAsync(
+        Guid taskId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    System.Threading.Tasks.Task<TaskDependenciesReadModel?> GetTaskDependenciesAsync(
+        Guid taskId,
+        CancellationToken cancellationToken);
 }

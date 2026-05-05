@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Domain.Entities;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
@@ -148,51 +149,29 @@ public sealed class RemoveTaskDependencyCommandHandler(
     }
 }
 
-public sealed class GetTaskDependenciesQueryHandler(TaskFlowDbContext dbContext)
+public sealed class GetTaskDependenciesQueryHandler(ITaskRepository taskRepository)
     : IRequestHandler<GetTaskDependenciesQuery, TaskDependenciesResponse?>
 {
     public async Task<TaskDependenciesResponse?> Handle(GetTaskDependenciesQuery request, CancellationToken cancellationToken)
     {
-        var me = await dbContext.Tasks
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == request.TaskId, cancellationToken);
+        var me = await taskRepository.GetTaskDependenciesAsync(request.TaskId, cancellationToken);
         if (me is null)
         {
             return null;
         }
 
-        var blockedByRows = await (
-                from d in dbContext.TaskDependencies.AsNoTracking()
-                join b in dbContext.Tasks.AsNoTracking() on d.BlockingTaskId equals b.Id
-                where d.BlockedTaskId == request.TaskId
-                select new { b.Id, b.Title, b.Status })
-            .ToListAsync(cancellationToken);
-
-        var blockedBy = blockedByRows
-            .Select(r => new DependencyDto(
-                request.TaskId,
-                new TaskBlockingSummaryDto(r.Id, r.Title, r.Status)))
+        var blockedBy = me.BlockedBy
+            .Select(b => new DependencyDto(
+                me.TaskId,
+                new TaskBlockingSummaryDto(b.Id, b.Title, b.Status)))
             .ToList();
 
-        var blockedIds = await dbContext.TaskDependencies
-            .AsNoTracking()
-            .Where(d => d.BlockingTaskId == request.TaskId)
-            .Select(d => d.BlockedTaskId)
-            .ToListAsync(cancellationToken);
-
-        var blockedTasks = await dbContext.Tasks
-            .AsNoTracking()
-            .Where(t => blockedIds.Contains(t.Id))
-            .ToDictionaryAsync(t => t.Id, cancellationToken);
-
-        var blocking = blockedIds
-            .Where(id => blockedTasks.ContainsKey(id))
-            .Select(id =>
+        var blocking = me.Blocking
+            .Select(b =>
             {
-                var b = blockedTasks[id];
                 return new DependencyDto(
                     b.Id,
-                    new TaskBlockingSummaryDto(me.Id, me.Title, me.Status));
+                    new TaskBlockingSummaryDto(me.TaskId, me.Title, me.Status));
             })
             .ToList();
 

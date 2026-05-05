@@ -1,37 +1,26 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
-public sealed class GetTaskChecklistHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant)
+public sealed class GetTaskChecklistHandler(ITaskRepository taskRepository)
     : IRequestHandler<GetTaskChecklistQuery, IReadOnlyList<ChecklistItemDto>?>
 {
     public async Task<IReadOnlyList<ChecklistItemDto>?> Handle(
         GetTaskChecklistQuery request,
         CancellationToken cancellationToken)
     {
-        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(
-            dbContext,
-            currentTenant,
+        var items = await taskRepository.GetTaskChecklistAsync(
             request.TaskId,
             cancellationToken);
-
-        if (task is null)
+        if (items is null)
         {
             return null;
         }
 
-        var rows = await dbContext.ChecklistItems
-            .AsNoTracking()
-            .Where(c => c.TaskId == request.TaskId)
-            .OrderBy(c => c.Order)
-            .ToListAsync(cancellationToken);
-
-        return rows.Select(ChecklistItemMapper.ToDto).ToList();
+        return items.Select(i =>
+                new ChecklistItemDto(i.Id, i.Title, i.IsCompleted, i.Order, i.CompletedAtUtc))
+            .ToList();
     }
 }
