@@ -1,15 +1,14 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Notifications;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Notifications;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Notifications.Handlers;
 
 public sealed class MarkAllNotificationsReadHandler(
-    TaskFlowDbContext dbContext,
+    INotificationWriteRepository notificationWriteRepository,
     ICurrentUser currentUser,
     IMemoryCache cache)
     : IRequestHandler<MarkAllNotificationsReadCommand, int>
@@ -21,9 +20,7 @@ public sealed class MarkAllNotificationsReadHandler(
             return 0;
         }
 
-        var updated = await dbContext.Notifications
-            .Where(n => n.UserId == userId && !n.IsRead)
-            .ExecuteUpdateAsync(s => s.SetProperty(n => n.IsRead, true), cancellationToken);
+        var updated = await notificationWriteRepository.MarkAllNotificationsReadAsync(userId, cancellationToken);
 
         if (updated > 0)
         {

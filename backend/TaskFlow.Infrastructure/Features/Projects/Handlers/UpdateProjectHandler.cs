@@ -1,19 +1,18 @@
-using AutoMapper;
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Projects;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 
 public sealed class UpdateProjectHandler(
-    TaskFlowDbContext dbContext,
+    IProjectWriteRepository projectRepository,
+    IProjectReadRepository projectReadRepository,
     ICurrentUser currentUser,
-    IMapper mapper,
+    ICurrentUserService currentUserService,
     IBoardCacheVersion boardCacheVersion,
     IActivityLogger activityLogger,
     IMemoryCache cache)
@@ -21,45 +20,37 @@ public sealed class UpdateProjectHandler(
 {
     public async Task<ProjectDto?> Handle(UpdateProjectCommand request, CancellationToken cancellationToken)
     {
-        var project = await dbContext.Projects
-            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
-
-        if (project is null)
+        var result = await projectRepository.UpdateProjectAsync(
+            request.ProjectId,
+            request.Name,
+            request.Description,
+            cancellationToken);
+        if (result is null)
         {
             return null;
         }
 
-        var previousName = project.Name;
-        var previousDescription = project.Description;
-
-        project.Name = request.Name;
-        project.Description = request.Description;
-        project.UpdatedAtUtc = DateTime.UtcNow;
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
         if (currentUser.UserId is { } actorId)
         {
-            var actor = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == actorId, cancellationToken);
-            var actorName = actor?.UserName ?? string.Empty;
             await activityLogger.LogAsync(
                 ActivityEntityTypes.Project,
-                project.Id,
+                result.ProjectId,
                 ActivityActions.ProjectUpdated,
                 actorId,
-                actorName,
-                project.OrganizationId,
-                new { previousName, previousDescription, name = project.Name, description = project.Description },
+                currentUserService.UserName,
+                result.OrganizationId,
+                new { previousName = result.PreviousName, previousDescription = result.PreviousDescription, name = result.Name, description = result.Description },
                 cancellationToken);
         }
 
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, project.OrganizationId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, result.OrganizationId);
         DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId);
 
-        boardCacheVersion.BumpProject(project.Id);
-        return mapper.Map<ProjectDto>(project);
+        boardCacheVersion.BumpProject(result.ProjectId);
+        var project = await projectReadRepository.GetProjectByIdAsync(result.ProjectId, cancellationToken);
+        return project is null
+            ? null
+            : new ProjectDto(project.Id, project.Name, project.Description, project.CreatedAtUtc, project.UpdatedAtUtc);
     }
 }
 

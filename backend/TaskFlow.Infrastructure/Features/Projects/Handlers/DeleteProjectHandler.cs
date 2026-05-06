@@ -1,18 +1,18 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Projects;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 
 public sealed class DeleteProjectHandler(
-    TaskFlowDbContext dbContext,
+    IProjectWriteRepository projectRepository,
     ICurrentUser currentUser,
+    ICurrentUserService currentUserService,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
     IActivityLogger activityLogger,
@@ -21,60 +21,33 @@ public sealed class DeleteProjectHandler(
 {
     public async Task<bool> Handle(DeleteProjectCommand request, CancellationToken cancellationToken)
     {
-        var project = await dbContext.Projects
-            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
-
-        if (project is null)
+        var deleted = await projectRepository.SoftDeleteProjectAsync(request.ProjectId, cancellationToken);
+        if (deleted is null || !deleted.Deleted)
         {
             return false;
         }
 
-        var orgId = project.OrganizationId;
-        var projectId = project.Id;
-        var name = project.Name;
-        var now = DateTime.UtcNow;
-
         if (currentUser.UserId is { } actorId)
         {
-            var actor = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == actorId, cancellationToken);
-            var actorName = actor?.UserName ?? string.Empty;
             await activityLogger.LogAsync(
                 ActivityEntityTypes.Project,
-                projectId,
+                deleted.ProjectId,
                 ActivityActions.ProjectDeleted,
                 actorId,
-                actorName,
-                orgId,
-                new { name },
+                currentUserService.UserName,
+                deleted.OrganizationId,
+                new { name = deleted.Name },
                 cancellationToken);
         }
-
-        project.IsDeleted = true;
-        project.DeletedAt = now;
-        project.UpdatedAtUtc = now;
-
-        var projectTasks = await dbContext.Tasks
-            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
-            .ToListAsync(cancellationToken);
-        foreach (var task in projectTasks)
-        {
-            task.IsDeleted = true;
-            task.DeletedAt = now;
-            task.UpdatedAtUtc = now;
-        }
-
-        boardCacheVersion.RemoveProject(project.Id);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        boardCacheVersion.RemoveProject(deleted.ProjectId);
 
         await webhookDispatcher.DispatchOrganizationEventAsync(
-            orgId,
+            deleted.OrganizationId,
             WebhookEventTypes.ProjectDeleted,
-            new { projectId, name },
+            new { projectId = deleted.ProjectId, name = deleted.Name },
             cancellationToken);
 
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, orgId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, deleted.OrganizationId);
         DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId);
         return true;
     }

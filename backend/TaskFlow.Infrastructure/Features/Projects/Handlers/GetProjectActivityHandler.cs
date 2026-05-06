@@ -1,50 +1,35 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
-using TaskFlow.Application.Tenancy;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Activity;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 
-public sealed class GetProjectActivityHandler(TaskFlowDbContext dbContext)
+public sealed class GetProjectActivityHandler(IProjectReadRepository projectRepository)
     : IRequestHandler<GetProjectActivityQuery, PagedResultDto<ActivityLogDto>?>
 {
     public async Task<PagedResultDto<ActivityLogDto>?> Handle(
         GetProjectActivityQuery request,
         CancellationToken cancellationToken)
     {
-        var project = await dbContext.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
-
-        if (project is null)
+        var paged = await projectRepository.GetProjectActivityAsync(
+            request.ProjectId,
+            request.Page,
+            request.PageSize,
+            cancellationToken);
+        if (paged is null)
         {
             return null;
         }
 
-        var page = request.Page < 1 ? 1 : request.Page;
-        var pageSize = request.PageSize is < 1 or > 100 ? 20 : request.PageSize;
-        var skip = (page - 1) * pageSize;
-        var projectId = request.ProjectId;
-
-        var query = dbContext.ActivityLogs
-            .AsNoTracking()
-            .Where(
-                a =>
-                    (a.EntityType == ActivityEntityTypes.Project && a.EntityId == projectId) ||
-                    (a.EntityType == ActivityEntityTypes.Task &&
-                     dbContext.Tasks.Any(t => t.Id == a.EntityId && t.ProjectId == projectId)));
-
-        var total = await query.LongCountAsync(cancellationToken);
-        var rows = await query
-            .OrderByDescending(a => a.OccurredAtUtc)
-            .Skip(skip)
-            .Take(pageSize)
-            .ToListAsync(cancellationToken);
-
-        var items = rows.Select(ActivityLogMapper.ToDto).ToList();
-        return PagedResultDto<ActivityLogDto>.Create(items, page, pageSize, total);
+        var items = paged.Items.Select(r => new ActivityLogDto(
+            r.Id,
+            r.Action,
+            new ActivityActorDto(r.ActorId, r.ActorName),
+            r.OccurredAtUtc,
+            ActivityLogMapper.ParseMetadata(r.Metadata)))
+            .ToList();
+        return PagedResultDto<ActivityLogDto>.Create(items, paged.Page, paged.PageSize, paged.TotalCount);
     }
 }

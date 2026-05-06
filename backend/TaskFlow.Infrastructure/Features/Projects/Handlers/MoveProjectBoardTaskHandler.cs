@@ -1,18 +1,18 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Projects;
-using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 
 public sealed class MoveProjectBoardTaskHandler(
-    TaskFlowDbContext dbContext,
+    IProjectWriteRepository projectWriteRepository,
+    IProjectReadRepository projectReadRepository,
     ICurrentUser currentUser,
+    ICurrentUserService currentUserService,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
     TimeProvider timeProvider,
@@ -23,86 +23,72 @@ public sealed class MoveProjectBoardTaskHandler(
         MoveProjectBoardTaskCommand request,
         CancellationToken cancellationToken)
     {
-        var task = await dbContext.Tasks
-            .FirstOrDefaultAsync(
-                t => t.Id == request.TaskId && t.ProjectId == request.ProjectId,
-                cancellationToken);
-
-        if (task is null)
+        var moved = await projectWriteRepository.MoveProjectBoardTaskAsync(
+            request.ProjectId,
+            request.TaskId,
+            request.NewStatus,
+            timeProvider.GetUtcNow().UtcDateTime,
+            cancellationToken);
+        if (moved is null || !moved.TaskFound)
         {
             return null;
         }
 
-        var previous = task.Status;
-        if (previous == request.NewStatus)
+        if (!moved.StatusChanged)
         {
-            return await LoadBoardTaskDtoAsync(task.Id, cancellationToken);
+            return await LoadBoardTaskDtoAsync(moved.TaskId, cancellationToken);
         }
-
-        task.Status = request.NewStatus;
-        task.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        await dbContext.SaveChangesAsync(cancellationToken);
 
         if (currentUser.UserId is { } actorId)
         {
-            var actor = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == actorId, cancellationToken);
-            var actorName = actor?.UserName ?? string.Empty;
             await activityLogger.LogAsync(
                 ActivityEntityTypes.Task,
-                task.Id,
+                moved.TaskId,
                 ActivityActions.TaskStatusChanged,
                 actorId,
-                actorName,
-                task.OrganizationId,
-                new { from = previous.ToString(), to = request.NewStatus.ToString(), projectId = task.ProjectId },
+                currentUserService.UserName,
+                moved.OrganizationId,
+                new { from = moved.PreviousStatus.ToString(), to = request.NewStatus.ToString(), projectId = moved.ProjectId },
                 cancellationToken);
         }
 
-        boardCacheVersion.BumpProject(task.ProjectId);
+        boardCacheVersion.BumpProject(moved.ProjectId);
         DashboardCacheInvalidation.InvalidateAfterTaskMutation(
             cache,
-            task.OrganizationId,
+            moved.OrganizationId,
             currentUser.UserId,
-            task.AssigneeId,
-            task.AssigneeId);
+            moved.AssigneeId,
+            moved.AssigneeId);
 
-        return await LoadBoardTaskDtoAsync(task.Id, cancellationToken);
+        return await LoadBoardTaskDtoAsync(moved.TaskId, cancellationToken);
     }
 
     private async System.Threading.Tasks.Task<BoardTaskDto?> LoadBoardTaskDtoAsync(
         Guid taskId,
         CancellationToken cancellationToken)
     {
-        var task = await dbContext.Tasks
-            .AsNoTracking()
-            .Include(t => t.TaskTags)
-            .ThenInclude(tt => tt.Tag)
-            .FirstOrDefaultAsync(t => t.Id == taskId, cancellationToken);
-
+        var task = await projectReadRepository.GetBoardTaskByIdAsync(taskId, cancellationToken);
         if (task is null)
         {
             return null;
         }
 
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
-
-        var commentCount = await dbContext.Comments
-            .AsNoTracking()
-            .CountAsync(c => c.TaskId == taskId && !c.IsDeleted, cancellationToken);
-
-        Dictionary<Guid, ApplicationUser> assignees = new();
-        if (task.AssigneeId is { } aid)
-        {
-            var u = await dbContext.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == aid, cancellationToken);
-            if (u is not null)
-            {
-                assignees = new Dictionary<Guid, ApplicationUser> { [u.Id] = u };
-            }
-        }
-
-        var counts = new Dictionary<Guid, int> { [task.Id] = commentCount };
-        return BoardMapper.ToBoardTask(task, assignees, counts, nowUtc);
+        var assignee = task.AssigneeId is { } aid
+            ? new TaskFlow.Application.Tasks.TaskAssigneeDto(aid, task.AssigneeUserName ?? string.Empty, task.AssigneeDisplayName)
+            : null;
+        var tags = task.Tags
+            .Select(t => new TaskFlow.Application.Tasks.TagDto(t.Id, t.Name, t.Color))
+            .ToList();
+        return new BoardTaskDto(
+            task.TaskId,
+            task.Title,
+            task.Priority,
+            task.DueDateUtc,
+            task.DueDateUtc.HasValue && task.DueDateUtc.Value < nowUtc,
+            assignee,
+            tags,
+            task.CommentCount,
+            task.CreatedAtUtc);
     }
 }

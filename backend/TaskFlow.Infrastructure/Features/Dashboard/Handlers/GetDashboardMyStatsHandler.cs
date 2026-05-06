@@ -1,20 +1,18 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Dashboard;
-using TaskFlow.Application.Tasks;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Domain.Entities;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Persistence;
 using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.Infrastructure.Features.Dashboard.Handlers;
 
 public sealed class GetDashboardMyStatsHandler(
-    TaskFlowDbContext dbContext,
+    IDashboardReadRepository dashboardReadRepository,
     ICurrentTenant currentTenant,
     ICurrentUser currentUser,
     IMemoryCache cache,
@@ -51,11 +49,7 @@ public sealed class GetDashboardMyStatsHandler(
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var dueSoonEnd = now.AddDays(7);
 
-        var pairs = await dbContext.Tasks.AsNoTracking()
-            .Where(t => t.AssigneeId == userId)
-            .GroupBy(t => new { t.Status, t.Priority })
-            .Select(g => new { g.Key.Status, g.Key.Priority, Count = g.Count() })
-            .ToListAsync(cancellationToken);
+        var pairs = await dashboardReadRepository.GetMyStatusPriorityCountsAsync(userId, cancellationToken);
 
         var countsByStatus = new Dictionary<DomainTaskStatus, int>();
         var countsByPriority = new Dictionary<TaskPriority, int>();
@@ -67,22 +61,8 @@ public sealed class GetDashboardMyStatsHandler(
 
         var total = countsByStatus.Values.Sum();
         var completed = countsByStatus.GetValueOrDefault(DomainTaskStatus.Done);
-        var overdue = await dbContext.Tasks.AsNoTracking().CountAsync(
-            t => t.AssigneeId == userId
-                 && t.DueDateUtc != null
-                 && t.DueDateUtc < now
-                 && t.Status != DomainTaskStatus.Done
-                 && t.Status != DomainTaskStatus.Cancelled,
-            cancellationToken);
-
-        var dueSoon = await dbContext.Tasks.AsNoTracking().CountAsync(
-            t => t.AssigneeId == userId
-                 && t.DueDateUtc != null
-                 && t.DueDateUtc >= now
-                 && t.DueDateUtc <= dueSoonEnd
-                 && t.Status != DomainTaskStatus.Done
-                 && t.Status != DomainTaskStatus.Cancelled,
-            cancellationToken);
+        var overdue = await dashboardReadRepository.GetMyOverdueCountAsync(userId, now, cancellationToken);
+        var dueSoon = await dashboardReadRepository.GetMyDueSoonCountAsync(userId, now, dueSoonEnd, cancellationToken);
 
         var statuses = (DomainTaskStatus[])Enum.GetValues(typeof(DomainTaskStatus));
         var priorities = (TaskPriority[])Enum.GetValues(typeof(TaskPriority));
@@ -97,14 +77,10 @@ public sealed class GetDashboardMyStatsHandler(
             .Select(p => new TasksByPriorityDto(p.ToString(), countsByPriority.GetValueOrDefault(p)))
             .ToList();
 
-        var myLogs = await dbContext.ActivityLogs.AsNoTracking()
-            .Where(a => a.ActorId == userId)
-            .OrderByDescending(a => a.OccurredAtUtc)
-            .Take(5)
-            .ToListAsync(cancellationToken);
-
-        var myRecentActivity =
-            await DashboardActivityEnrichment.ToRecentActivityDtosAsync(dbContext, myLogs, cancellationToken);
+        var myRecentRaw = await dashboardReadRepository.GetMyRecentActivityAsync(userId, 5, cancellationToken);
+        var myRecentActivity = myRecentRaw
+            .Select(a => new DashboardRecentActivityDto(a.Action, a.ActorName, a.OccurredAt, a.EntityTitle))
+            .ToList();
 
         return new DashboardMyStatsDto(
             new MyTasksSummaryDto(total, completed, overdue, dueSoon),

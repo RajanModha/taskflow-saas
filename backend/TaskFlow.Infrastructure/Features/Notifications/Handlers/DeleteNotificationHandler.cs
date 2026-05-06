@@ -1,15 +1,14 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Notifications;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Notifications;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Notifications.Handlers;
 
 public sealed class DeleteNotificationHandler(
-    TaskFlowDbContext dbContext,
+    INotificationWriteRepository notificationWriteRepository,
     ICurrentUser currentUser,
     IMemoryCache cache)
     : IRequestHandler<DeleteNotificationCommand, bool>
@@ -21,22 +20,15 @@ public sealed class DeleteNotificationHandler(
             return false;
         }
 
-        var existing = await dbContext.Notifications.AsNoTracking()
-            .FirstOrDefaultAsync(n => n.Id == request.NotificationId && n.UserId == userId, cancellationToken);
-        if (existing is null)
-        {
-            return false;
-        }
-
-        var deleted = await dbContext.Notifications
-            .Where(n => n.Id == request.NotificationId && n.UserId == userId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        if (deleted > 0)
+        var deleted = await notificationWriteRepository.DeleteNotificationAsync(
+            userId,
+            request.NotificationId,
+            cancellationToken);
+        if (deleted)
         {
             cache.Remove(NotificationCacheKeys.UnreadCount(userId));
         }
 
-        return deleted > 0;
+        return deleted;
     }
 }

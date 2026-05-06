@@ -1,9 +1,7 @@
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Dashboard;
 using TaskFlow.Domain.Entities;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Dashboard;
 
@@ -38,37 +36,15 @@ internal static class DashboardActivityEnrichment
         return null;
     }
 
-    internal static async Task<IReadOnlyList<DashboardRecentActivityDto>> ToRecentActivityDtosAsync(
-        TaskFlowDbContext db,
+    internal static IReadOnlyList<DashboardRecentActivityDto> ToRecentActivityDtos(
         IReadOnlyList<ActivityLog> logs,
-        CancellationToken cancellationToken)
+        IReadOnlyDictionary<Guid, string> taskTitles,
+        IReadOnlyDictionary<Guid, string> projectNames)
     {
         if (logs.Count == 0)
         {
             return [];
         }
-
-        var taskIds = logs
-            .Where(l => l.EntityType == ActivityEntityTypes.Task)
-            .Select(l => l.EntityId)
-            .Distinct()
-            .ToList();
-
-        var projectIds = logs
-            .Where(l => l.EntityType == ActivityEntityTypes.Project)
-            .Select(l => l.EntityId)
-            .Distinct()
-            .ToList();
-
-        var taskTitles = await db.Tasks.AsNoTracking()
-            .Where(t => taskIds.Contains(t.Id))
-            .Select(t => new { t.Id, t.Title })
-            .ToDictionaryAsync(x => x.Id, x => x.Title, cancellationToken);
-
-        var projectNames = await db.Projects.AsNoTracking()
-            .Where(p => projectIds.Contains(p.Id))
-            .Select(p => new { p.Id, p.Name })
-            .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken);
 
         var list = new List<DashboardRecentActivityDto>(logs.Count);
         foreach (var log in logs)

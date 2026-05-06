@@ -1,16 +1,14 @@
-using AutoMapper;
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Projects;
-using TaskFlow.Infrastructure.Features.Tasks;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Application.Tasks;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 
 public sealed class GetProjectExportHandler(
-    TaskFlowDbContext dbContext,
-    IMapper mapper,
+    IProjectReadRepository projectReadRepository,
+    ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUserService currentUser)
     : IRequestHandler<GetProjectExportQuery, GetProjectExportQueryResponse>
 {
@@ -18,31 +16,21 @@ public sealed class GetProjectExportHandler(
         GetProjectExportQuery request,
         CancellationToken cancellationToken)
     {
-        var project = await dbContext.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
-
-        if (project is null)
+        var exportData = await projectReadRepository.GetProjectExportDataAsync(request.ProjectId, cancellationToken);
+        if (exportData is null)
         {
             return new GetProjectExportQueryResponse(true, false, null);
         }
 
-        var query = dbContext.Tasks
-            .AsNoTracking()
-            .Where(t => t.ProjectId == request.ProjectId && !t.IsDeleted);
-
-        var count = await query.LongCountAsync(cancellationToken);
+        var count = exportData.Value.Tasks.Count;
         if (count > 10_000)
         {
             return new GetProjectExportQueryResponse(false, true, null);
         }
 
-        var tasks = await query
-            .OrderByDescending(t => t.CreatedAtUtc)
-            .ToListAsync(cancellationToken);
-
-        var taskDtos = await TaskProjection.ToDtosAsync(dbContext, tasks, cancellationToken);
-        var projectDto = mapper.Map<ProjectDto>(project);
+        var taskDtos = await taskReadModelAssembler.ToTaskDtosAsync(exportData.Value.Tasks, cancellationToken);
+        var project = exportData.Value.Project;
+        var projectDto = new ProjectDto(project.Id, project.Name, project.Description, project.CreatedAtUtc, project.UpdatedAtUtc);
         var exportedBy = string.IsNullOrWhiteSpace(currentUser.UserName)
             ? currentUser.UserId.ToString()
             : currentUser.UserName;

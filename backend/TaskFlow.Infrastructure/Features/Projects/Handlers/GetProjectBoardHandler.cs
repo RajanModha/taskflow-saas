@@ -1,10 +1,9 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Projects;
-using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Application.Tasks;
+using TaskFlow.Domain.Repositories;
 using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
@@ -14,7 +13,7 @@ namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 /// Domain <see cref="TaskFlow.Domain.Entities.Task"/> has no Assignee navigation (Identity lives in Infrastructure), so assignees are not EF-Included.
 /// </summary>
 public sealed class GetProjectBoardHandler(
-    TaskFlowDbContext dbContext,
+    IProjectReadRepository projectReadRepository,
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
@@ -31,11 +30,13 @@ public sealed class GetProjectBoardHandler(
 
     public async Task<ProjectBoardResponse?> Handle(GetProjectBoardQuery request, CancellationToken cancellationToken)
     {
-        var project = await dbContext.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
-
-        if (project is null)
+        var boardData = await projectReadRepository.GetProjectBoardDataAsync(
+            request.ProjectId,
+            request.AssigneeId,
+            request.TagId,
+            request.Q,
+            cancellationToken);
+        if (boardData is null)
         {
             return null;
         }
@@ -56,32 +57,7 @@ public sealed class GetProjectBoardHandler(
             }
         }
 
-        var query = dbContext.Tasks
-            .AsNoTracking()
-            .Where(t => t.ProjectId == request.ProjectId);
-
-        if (request.AssigneeId.HasValue)
-        {
-            query = query.Where(t => t.AssigneeId == request.AssigneeId.Value);
-        }
-
-        if (request.TagId.HasValue)
-        {
-            var tagId = request.TagId.Value;
-            query = query.Where(t => dbContext.TaskTags.Any(tt => tt.TaskId == t.Id && tt.TagId == tagId));
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Q))
-        {
-            var qNorm = request.Q.Trim().ToLower();
-            query = query.Where(t => t.Title.ToLower().Contains(qNorm));
-        }
-
-        var tasks = await query
-            .Include(t => t.TaskTags)
-            .ThenInclude(tt => tt.Tag)
-            .AsSplitQuery()
-            .ToListAsync(cancellationToken);
+        var tasks = boardData.Value.Tasks;
 
         IReadOnlyDictionary<DomainTaskStatus, IReadOnlyList<BoardTaskDto>> byColumn;
         if (tasks.Count == 0)
@@ -90,36 +66,35 @@ public sealed class GetProjectBoardHandler(
         }
         else
         {
-            var taskIds = tasks.Select(t => t.Id).ToList();
-
-            var commentCounts = await dbContext.Comments
-                .AsNoTracking()
-                .Where(c => taskIds.Contains(c.TaskId) && !c.IsDeleted)
-                .GroupBy(c => c.TaskId)
-                .Select(g => new { TaskId = g.Key, Count = g.Count() })
-                .ToDictionaryAsync(x => x.TaskId, x => x.Count, cancellationToken);
-
-            var assigneeIds = tasks.Where(t => t.AssigneeId.HasValue).Select(t => t.AssigneeId!.Value).Distinct().ToList();
-            Dictionary<Guid, ApplicationUser> assignees = new();
-            if (assigneeIds.Count > 0)
-            {
-                assignees = await dbContext.Users
-                    .AsNoTracking()
-                    .Where(u => assigneeIds.Contains(u.Id))
-                    .ToDictionaryAsync(u => u.Id, cancellationToken);
-            }
-
             byColumn = tasks
                 .GroupBy(t => BoardMapper.ColumnFor(t.Status))
                 .ToDictionary(
                     g => g.Key,
                     g => (IReadOnlyList<BoardTaskDto>)BoardMapper.SortBoardTasks(
-                        g.Select(task => BoardMapper.ToBoardTask(task, assignees, commentCounts, nowUtc))));
+                        g.Select(task => ToBoardTask(task, nowUtc))));
         }
 
-        var response = BuildResponse(project.Id, project.Name, byColumn);
+        var response = BuildResponse(boardData.Value.Project.Id, boardData.Value.Project.Name, byColumn);
         TrySetCache(request.ProjectId, filtersFingerprint, version, response);
         return response;
+    }
+
+    private static BoardTaskDto ToBoardTask(ProjectBoardTaskReadModel task, DateTime nowUtc)
+    {
+        var assignee = task.AssigneeId is { } aid
+            ? new TaskAssigneeDto(aid, task.AssigneeUserName ?? string.Empty, task.AssigneeDisplayName)
+            : null;
+        var tags = task.Tags.Select(t => new TagDto(t.Id, t.Name, t.Color)).ToList();
+        return new BoardTaskDto(
+            task.TaskId,
+            task.Title,
+            task.Priority,
+            task.DueDateUtc,
+            task.DueDateUtc.HasValue && task.DueDateUtc.Value < nowUtc,
+            assignee,
+            tags,
+            task.CommentCount,
+            task.CreatedAtUtc);
     }
 
     private void TrySetCache(

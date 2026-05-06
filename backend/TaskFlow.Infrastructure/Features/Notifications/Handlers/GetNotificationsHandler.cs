@@ -1,14 +1,13 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Notifications;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Notifications.Handlers;
 
 public sealed class GetNotificationsHandler(
-    TaskFlowDbContext dbContext,
+    INotificationReadRepository notificationReadRepository,
     ICurrentUser currentUser)
     : IRequestHandler<GetNotificationsQuery, PagedResultDto<NotificationDto>>
 {
@@ -21,24 +20,13 @@ public sealed class GetNotificationsHandler(
             return PagedResultDto<NotificationDto>.Create([], 1, 20, 0);
         }
 
-        var page = request.Page < 1 ? 1 : request.Page;
-        var pageSize = request.PageSize is < 1 or > 100 ? 20 : request.PageSize;
-        var skip = (page - 1) * pageSize;
-
-        var query = dbContext.Notifications
-            .AsNoTracking()
-            .Where(n => n.UserId == userId);
-
-        if (request.UnreadOnly)
-        {
-            query = query.Where(n => !n.IsRead);
-        }
-
-        var total = await query.LongCountAsync(cancellationToken);
-        var items = await query
-            .OrderByDescending(n => n.CreatedAt)
-            .Skip(skip)
-            .Take(pageSize)
+        var paged = await notificationReadRepository.GetPagedNotificationsAsync(
+            userId,
+            request.Page,
+            request.PageSize,
+            request.UnreadOnly,
+            cancellationToken);
+        var items = paged.Items
             .Select(n => new NotificationDto(
                 n.Id,
                 n.Type,
@@ -48,8 +36,7 @@ public sealed class GetNotificationsHandler(
                 n.CreatedAt,
                 n.EntityType,
                 n.EntityId))
-            .ToListAsync(cancellationToken);
-
-        return PagedResultDto<NotificationDto>.Create(items, page, pageSize, total);
+            .ToList();
+        return PagedResultDto<NotificationDto>.Create(items, paged.Page, paged.PageSize, paged.TotalCount);
     }
 }

@@ -1,23 +1,19 @@
-using AutoMapper;
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Projects;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Projects.Handlers;
 
 public sealed class GetProjectByIdHandler(
-    TaskFlowDbContext dbContext,
-    IMapper mapper)
+    IProjectReadRepository projectRepository)
     : IRequestHandler<GetProjectByIdQuery, ProjectDto?>
 {
     public async Task<ProjectDto?> Handle(GetProjectByIdQuery request, CancellationToken cancellationToken)
     {
-        var project = await dbContext.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
-
-        return project is null ? null : mapper.Map<ProjectDto>(project);
+        var project = await projectRepository.GetProjectByIdAsync(request.ProjectId, cancellationToken);
+        return project is null
+            ? null
+            : new ProjectDto(project.Id, project.Name, project.Description, project.CreatedAtUtc, project.UpdatedAtUtc);
     }
 }
 

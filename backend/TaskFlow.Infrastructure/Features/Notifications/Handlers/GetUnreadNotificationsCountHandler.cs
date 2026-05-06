@@ -1,15 +1,14 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Notifications;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Notifications;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Notifications.Handlers;
 
 public sealed class GetUnreadNotificationsCountHandler(
-    TaskFlowDbContext dbContext,
+    INotificationReadRepository notificationReadRepository,
     ICurrentUser currentUser,
     IMemoryCache cache)
     : IRequestHandler<GetUnreadNotificationsCountQuery, int>
@@ -25,8 +24,7 @@ public sealed class GetUnreadNotificationsCountHandler(
         return await cache.GetOrCreateAsync(key, async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10);
-            return await dbContext.Notifications.AsNoTracking()
-                .CountAsync(n => n.UserId == userId && !n.IsRead, cancellationToken);
+            return await notificationReadRepository.GetUnreadCountAsync(userId, cancellationToken);
         });
     }
 }

@@ -58,6 +58,11 @@ public static class DependencyInjection
         services.AddScoped<ITaskCommentRepository>(sp => sp.GetRequiredService<ITaskRepository>());
         services.AddScoped<ITaskTagRepository>(sp => sp.GetRequiredService<ITaskRepository>());
         services.AddScoped<ITaskDependencyRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<IProjectReadRepository, ProjectRepository>();
+        services.AddScoped<IProjectWriteRepository, ProjectRepository>();
+        services.AddScoped<INotificationReadRepository, NotificationRepository>();
+        services.AddScoped<INotificationWriteRepository, NotificationRepository>();
+        services.AddScoped<IDashboardReadRepository, DashboardReadRepository>();
         services.AddScoped<ITaskReadModelAssembler, EfTaskReadModelAssembler>();
 
         services
