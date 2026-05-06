@@ -50,6 +50,14 @@ public static class DependencyInjection
             options.UseNpgsql(connectionString));
 
         services.AddScoped<ITaskRepository, TaskRepository>();
+        services.AddScoped<ITaskExportRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<ITaskReadRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<ITaskWriteRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<ITaskBulkRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<ITaskChecklistRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<ITaskCommentRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<ITaskTagRepository>(sp => sp.GetRequiredService<ITaskRepository>());
+        services.AddScoped<ITaskDependencyRepository>(sp => sp.GetRequiredService<ITaskRepository>());
         services.AddScoped<ITaskReadModelAssembler, EfTaskReadModelAssembler>();
 
         services

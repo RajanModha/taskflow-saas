@@ -6,7 +6,7 @@ using TaskFlow.Infrastructure.Activity;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
-public sealed class GetTaskActivityHandler(ITaskRepository taskRepository)
+public sealed class GetTaskActivityHandler(ITaskReadRepository taskRepository)
     : IRequestHandler<GetTaskActivityQuery, PagedResultDto<ActivityLogDto>?>
 {
     public async Task<PagedResultDto<ActivityLogDto>?> Handle(

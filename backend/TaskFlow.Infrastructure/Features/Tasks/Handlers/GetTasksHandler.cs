@@ -7,7 +7,7 @@ using TaskFlow.Domain.Repositories;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class GetTasksHandler(
-    ITaskRepository taskRepository,
+    ITaskReadRepository taskRepository,
     ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser) : IRequestHandler<GetTasksQuery, PagedResultDto<TaskDto>>
 {

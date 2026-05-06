@@ -8,7 +8,7 @@ using TaskFlow.Infrastructure.Features.Dashboard;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class BulkDeleteTasksHandler(
-    ITaskRepository taskRepository,
+    ITaskBulkRepository taskRepository,
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion)

@@ -4,7 +4,7 @@ using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
-public sealed class GetTaskChecklistHandler(ITaskRepository taskRepository)
+public sealed class GetTaskChecklistHandler(ITaskReadRepository taskRepository)
     : IRequestHandler<GetTaskChecklistQuery, IReadOnlyList<ChecklistItemDto>?>
 {
     public async Task<IReadOnlyList<ChecklistItemDto>?> Handle(

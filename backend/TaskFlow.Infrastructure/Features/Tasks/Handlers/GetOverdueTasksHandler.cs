@@ -6,7 +6,7 @@ using TaskFlow.Domain.Repositories;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class GetOverdueTasksHandler(
-    ITaskRepository taskRepository,
+    ITaskReadRepository taskRepository,
     ITaskReadModelAssembler taskReadModelAssembler) : IRequestHandler<GetOverdueTasksQuery, PagedResultDto<TaskDto>>
 {
     public async System.Threading.Tasks.Task<PagedResultDto<TaskDto>> Handle(

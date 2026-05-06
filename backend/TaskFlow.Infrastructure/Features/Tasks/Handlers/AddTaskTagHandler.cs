@@ -9,7 +9,8 @@ using TaskFlow.Application.Tasks;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class AddTaskTagHandler(
-    ITaskRepository taskRepository,
+    ITaskTagRepository taskRepository,
+    ITaskReadRepository taskReadRepository,
     ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IMemoryCache cache,
@@ -42,7 +43,7 @@ public sealed class AddTaskTagHandler(
         DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, result.AssigneeId);
         boardCacheVersion.BumpProject(result.ProjectId);
 
-        var detached = await taskRepository.GetDetachedTaskByIdAsync(result.TaskId, cancellationToken);
+        var detached = await taskReadRepository.GetDetachedTaskByIdAsync(result.TaskId, cancellationToken);
         if (detached is null)
         {
             return null;

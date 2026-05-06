@@ -13,7 +13,8 @@ using TaskFlow.Infrastructure.Email;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class CreateTaskHandler(
-    ITaskRepository taskRepository,
+    ITaskWriteRepository taskRepository,
+    ITaskReadRepository taskReadRepository,
     ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IOptions<EmailSettings> emailSettings,
@@ -84,7 +85,7 @@ public sealed class CreateTaskHandler(
                 cancellationToken);
         }
 
-        var detached = await taskRepository.GetDetachedTaskByIdAsync(created.TaskId, cancellationToken);
+        var detached = await taskReadRepository.GetDetachedTaskByIdAsync(created.TaskId, cancellationToken);
         if (detached is null)
         {
             return null;

@@ -10,7 +10,7 @@ using TaskFlow.Infrastructure.Features.Dashboard;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class UpdateChecklistItemHandler(
-    ITaskRepository taskRepository,
+    ITaskChecklistRepository taskRepository,
     ICurrentUser currentUser,
     IBoardCacheVersion boardCacheVersion,
     IActivityLogger activityLogger,

@@ -10,7 +10,8 @@ using TaskFlow.Infrastructure.Features.Dashboard;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class ReorderChecklistHandler(
-    ITaskRepository taskRepository,
+    ITaskChecklistRepository taskRepository,
+    ITaskReadRepository taskReadRepository,
     ICurrentUser currentUser,
     IBoardCacheVersion boardCacheVersion,
     IMemoryCache cache)
@@ -26,7 +27,7 @@ public sealed class ReorderChecklistHandler(
         {
             return null;
         }
-        var detached = await taskRepository.GetDetachedTaskByIdAsync(request.TaskId, cancellationToken);
+        var detached = await taskReadRepository.GetDetachedTaskByIdAsync(request.TaskId, cancellationToken);
         if (detached is null)
         {
             return null;

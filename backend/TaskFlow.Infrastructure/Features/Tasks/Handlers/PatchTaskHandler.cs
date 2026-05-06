@@ -11,7 +11,8 @@ using TaskFlow.Infrastructure.Features.Dashboard;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class PatchTaskHandler(
-    ITaskRepository taskRepository,
+    ITaskWriteRepository taskRepository,
+    ITaskReadRepository taskReadRepository,
     ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IMemoryCache cache,
@@ -76,7 +77,7 @@ public sealed class PatchTaskHandler(
                 cancellationToken);
         }
 
-        var detached = await taskRepository.GetDetachedTaskByIdAsync(result.TaskId, cancellationToken);
+        var detached = await taskReadRepository.GetDetachedTaskByIdAsync(result.TaskId, cancellationToken);
         if (detached is null)
         {
             return null;

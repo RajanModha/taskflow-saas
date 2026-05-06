@@ -5,7 +5,7 @@ using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
-public sealed class GetTaskCommentsHandler(ITaskRepository taskRepository)
+public sealed class GetTaskCommentsHandler(ITaskReadRepository taskRepository)
     : IRequestHandler<GetTaskCommentsQuery, PagedResultDto<CommentDto>?>
 {
     public async System.Threading.Tasks.Task<PagedResultDto<CommentDto>?> Handle(

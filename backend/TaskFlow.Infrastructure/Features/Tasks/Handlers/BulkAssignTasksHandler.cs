@@ -10,7 +10,7 @@ using TaskFlow.Infrastructure.Features.Dashboard;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class BulkAssignTasksHandler(
-    ITaskRepository taskRepository,
+    ITaskBulkRepository taskRepository,
     ICurrentUser currentUser,
     IOptions<EmailSettings> emailSettings,
     IEmailService emailService,

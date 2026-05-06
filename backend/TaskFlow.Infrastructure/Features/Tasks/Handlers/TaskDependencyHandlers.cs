@@ -10,7 +10,7 @@ using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class AddTaskDependencyCommandHandler(
-    ITaskRepository taskRepository,
+    ITaskDependencyRepository taskRepository,
     IBoardCacheVersion boardCacheVersion)
     : IRequestHandler<AddTaskDependencyCommand, AddTaskDependencyResult>
 {
@@ -52,7 +52,7 @@ public sealed class AddTaskDependencyCommandHandler(
 }
 
 public sealed class RemoveTaskDependencyCommandHandler(
-    ITaskRepository taskRepository,
+    ITaskDependencyRepository taskRepository,
     IBoardCacheVersion boardCacheVersion)
     : IRequestHandler<RemoveTaskDependencyCommand, bool>
 {
@@ -76,7 +76,7 @@ public sealed class RemoveTaskDependencyCommandHandler(
     }
 }
 
-public sealed class GetTaskDependenciesQueryHandler(ITaskRepository taskRepository)
+public sealed class GetTaskDependenciesQueryHandler(ITaskReadRepository taskRepository)
     : IRequestHandler<GetTaskDependenciesQuery, TaskDependenciesResponse?>
 {
     public async Task<TaskDependenciesResponse?> Handle(GetTaskDependenciesQuery request, CancellationToken cancellationToken)

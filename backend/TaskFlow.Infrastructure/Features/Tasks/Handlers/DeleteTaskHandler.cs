@@ -10,7 +10,7 @@ using TaskFlow.Domain.Repositories;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class DeleteTaskHandler(
-    ITaskRepository taskRepository,
+    ITaskWriteRepository taskRepository,
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,

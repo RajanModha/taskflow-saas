@@ -13,7 +13,8 @@ using TaskFlow.Infrastructure.Features.Dashboard;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class CreateTaskFromTemplateHandler(
-    ITaskRepository taskRepository,
+    ITaskWriteRepository taskRepository,
+    ITaskReadRepository taskReadRepository,
     ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IOptions<EmailSettings> emailSettings,
@@ -83,7 +84,7 @@ public sealed class CreateTaskFromTemplateHandler(
         DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, created.AssigneeId);
         boardCacheVersion.BumpProject(created.ProjectId);
 
-        var detached = await taskRepository.GetDetachedTaskByIdAsync(created.TaskId, cancellationToken);
+        var detached = await taskReadRepository.GetDetachedTaskByIdAsync(created.TaskId, cancellationToken);
         if (detached is null)
         {
             return null;

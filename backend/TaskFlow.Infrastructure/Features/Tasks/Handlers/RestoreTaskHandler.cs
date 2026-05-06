@@ -8,7 +8,8 @@ using TaskFlow.Infrastructure.Features.Dashboard;
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class RestoreTaskHandler(
-    ITaskRepository taskRepository,
+    ITaskWriteRepository taskRepository,
+    ITaskReadRepository taskReadRepository,
     ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IMemoryCache cache,
@@ -31,7 +32,7 @@ public sealed class RestoreTaskHandler(
             restored.AssigneeId);
         boardCacheVersion.BumpProject(restored.ProjectId);
 
-        var detached = await taskRepository.GetDetachedTaskByIdAsync(restored.TaskId, cancellationToken);
+        var detached = await taskReadRepository.GetDetachedTaskByIdAsync(restored.TaskId, cancellationToken);
         if (detached is null)
         {
             return null;

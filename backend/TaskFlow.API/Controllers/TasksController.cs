@@ -24,7 +24,7 @@ namespace TaskFlow.API.Controllers;
 [ApiVersion("1.0")]
 [Authorize]
 [Route("api/v{version:apiVersion}/[controller]")]
-public sealed class TasksController(IMediator mediator, ITaskRepository taskRepository) : ControllerBase
+public sealed class TasksController(IMediator mediator, ITaskExportRepository taskRepository) : ControllerBase
 {
     public sealed record CreateTaskFromTemplateOverridesRequest(
         string? Title,
