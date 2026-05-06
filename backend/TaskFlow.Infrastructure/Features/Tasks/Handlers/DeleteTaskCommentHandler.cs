@@ -1,21 +1,16 @@
 using MediatR;
 using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Domain.Entities;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class DeleteTaskCommentHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
     ICurrentUser currentUser,
-    TimeProvider timeProvider,
     IBoardCacheVersion boardCacheVersion,
     IMemoryCache cache) : IRequestHandler<DeleteTaskCommentCommand, DeleteTaskCommentResult>
 {
@@ -23,62 +18,18 @@ public sealed class DeleteTaskCommentHandler(
         DeleteTaskCommentCommand request,
         CancellationToken cancellationToken)
     {
-        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(
-            dbContext,
-            currentTenant,
+        var result = await taskRepository.DeleteTaskCommentAsync(
             request.TaskId,
+            request.CommentId,
+            currentUser.UserId,
             cancellationToken);
-
-        if (task is null)
+        if (result.StatusCode != StatusCodes.Status204NoContent)
         {
-            return new DeleteTaskCommentResult(StatusCodes.Status404NotFound);
+            return new DeleteTaskCommentResult(result.StatusCode);
         }
-
-        var comment = await dbContext.Comments
-            .FirstOrDefaultAsync(
-                c => c.Id == request.CommentId && c.TaskId == request.TaskId,
-                cancellationToken);
-
-        if (comment is null)
-        {
-            return new DeleteTaskCommentResult(StatusCodes.Status404NotFound);
-        }
-
-        if (currentUser.UserId is not { } userId)
-        {
-            return new DeleteTaskCommentResult(StatusCodes.Status403Forbidden);
-        }
-
-        var user = await dbContext.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
-
-        if (user is null)
-        {
-            return new DeleteTaskCommentResult(StatusCodes.Status403Forbidden);
-        }
-
-        var isAuthor = comment.AuthorId == userId;
-        var isPrivileged = user.WorkspaceRole is WorkspaceRole.Owner or WorkspaceRole.Admin;
-        if (!isAuthor && !isPrivileged)
-        {
-            return new DeleteTaskCommentResult(StatusCodes.Status403Forbidden);
-        }
-
-        if (comment.IsDeleted)
-        {
-            return new DeleteTaskCommentResult(StatusCodes.Status204NoContent);
-        }
-
-        comment.IsDeleted = true;
-        comment.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        boardCacheVersion.BumpProject(task.ProjectId);
-
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
-        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
-
+        boardCacheVersion.BumpProject(result.ProjectId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, result.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, result.AssigneeId);
         return new DeleteTaskCommentResult(StatusCodes.Status204NoContent);
     }
 }

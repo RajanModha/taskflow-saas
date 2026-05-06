@@ -1,201 +1,101 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
-using TaskFlow.Application.Common;
 using TaskFlow.Application.Notifications;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Workspaces;
-using TaskFlow.Domain.Entities;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Email;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Features.Tasks;
-using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
-using DomainTask = TaskFlow.Domain.Entities.Task;
-using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class CreateTaskFromTemplateHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
+    ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IOptions<EmailSettings> emailSettings,
     INotificationService notificationService,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
-    TimeProvider timeProvider,
     IActivityLogger activityLogger,
     IWebhookDispatcher webhookDispatcher)
     : IRequestHandler<CreateTaskFromTemplateCommand, TaskDto?>
 {
     public async Task<TaskDto?> Handle(CreateTaskFromTemplateCommand request, CancellationToken cancellationToken)
     {
-        if (!currentTenant.IsSet)
-        {
-            throw new TenantContextMissingException();
-        }
-
-        var orgId = currentTenant.OrganizationId;
-
-        var project = await dbContext.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                p => p.Id == request.ProjectId && p.OrganizationId == orgId,
-                cancellationToken);
-        if (project is null)
+        var created = await taskRepository.CreateTaskFromTemplateAsync(
+            new CreateTaskFromTemplateMutationInput(
+                request.TemplateId,
+                request.ProjectId,
+                request.Overrides?.Title,
+                request.Overrides?.Description,
+                request.Overrides?.Priority,
+                request.Overrides?.DueDateUtc,
+                request.Overrides?.AssigneeId),
+            cancellationToken);
+        if (created is null)
         {
             return null;
         }
 
-        var template = await dbContext.TaskTemplates
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                t => t.Id == request.TemplateId && t.OrganizationId == orgId,
-                cancellationToken);
-        if (template is null)
+        if (created.AssigneeId is { } assigneeId && created.AssigneeEmail is { Length: > 0 } toEmail)
         {
-            return null;
-        }
-
-        ApplicationUser? assignee = null;
-        if (request.Overrides?.AssigneeId is { } assigneeId)
-        {
-            assignee = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == assigneeId, cancellationToken);
-            if (assignee is null || assignee.OrganizationId != currentTenant.OrganizationId)
-            {
-                return null;
-            }
-        }
-
-        var dueDate = ResolveDueDateUtc(request.Overrides, template, timeProvider.GetUtcNow().UtcDateTime);
-        var title = string.IsNullOrWhiteSpace(request.Overrides?.Title)
-            ? template.DefaultTitle
-            : request.Overrides.Title!.Trim();
-        var description = request.Overrides?.Description ?? template.DefaultDescription;
-        var priority = request.Overrides?.Priority ?? template.DefaultPriority;
-
-        var now = DateTime.UtcNow;
-        var task = new DomainTask
-        {
-            Id = Guid.NewGuid(),
-            OrganizationId = orgId,
-            ProjectId = request.ProjectId,
-            Title = title,
-            Description = description,
-            Status = DomainTaskStatus.Todo,
-            Priority = priority,
-            DueDateUtc = dueDate,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = now,
-            AssigneeId = request.Overrides?.AssigneeId,
-            ReminderSent = false,
-            TemplateId = template.Id,
-        };
-
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        await dbContext.Tasks.AddAsync(task, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        var templateChecklist = await dbContext.TaskTemplateChecklistItems
-            .AsNoTracking()
-            .Where(i => i.TemplateId == template.Id)
-            .OrderBy(i => i.Order)
-            .ToListAsync(cancellationToken);
-        if (templateChecklist.Count > 0)
-        {
-            var checklistItems = templateChecklist
-                .Select(i => new ChecklistItem
-                {
-                    Id = Guid.NewGuid(),
-                    TaskId = task.Id,
-                    Title = i.Title,
-                    Order = i.Order,
-                    IsCompleted = false,
-                    CreatedAtUtc = now,
-                    CompletedAtUtc = null,
-                })
-                .ToList();
-            await dbContext.ChecklistItems.AddRangeAsync(checklistItems, cancellationToken);
-        }
-
-        var templateTagIds = await dbContext.TaskTemplateTags
-            .AsNoTracking()
-            .Where(tt => tt.TemplateId == template.Id)
-            .Select(tt => tt.TagId)
-            .ToArrayAsync(cancellationToken);
-        await TaskTagging.ReplaceTaskTagsAsync(dbContext, task.Id, templateTagIds, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await transaction.CommitAsync(cancellationToken);
-
-        if (assignee is not null)
-        {
-            await TaskAssignmentNotifier.NotifyAssigneeAsync(
-                dbContext,
-                notificationService,
-                emailSettings,
-                currentUser.UserId,
-                task,
-                project.Name,
-                assignee,
-                cancellationToken);
+            var assigneeName = created.AssigneeDisplayName ?? created.AssigneeUserName ?? "there";
+            var assignerName = "Someone";
+            var baseUrl = emailSettings.Value.FrontendBaseUrl.TrimEnd('/');
+            var taskUrl = $"{baseUrl}/tasks/{created.TaskId}";
+            await notificationService.CreateAsync(
+                assigneeId,
+                "task.assigned",
+                "Task assigned",
+                $"{assignerName} assigned you '{created.TaskTitle}'",
+                entityType: "Task",
+                entityId: created.TaskId,
+                sendEmail: true,
+                toEmail: toEmail,
+                emailSubject: $"You've been assigned: {created.TaskTitle}",
+                emailHtml: EmailTemplates.TaskAssigned(
+                    assigneeName,
+                    created.TaskTitle,
+                    created.ProjectName,
+                    assignerName,
+                    taskUrl),
+                ct: cancellationToken);
         }
 
         if (currentUser.UserId is { } actorId)
         {
-            var actor = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == actorId, cancellationToken);
-            var actorName = actor?.UserName ?? string.Empty;
             await activityLogger.LogAsync(
                 ActivityEntityTypes.Task,
-                task.Id,
+                created.TaskId,
                 ActivityActions.TaskCreatedFromTemplate,
                 actorId,
-                actorName,
-                orgId,
-                new { templateName = template.Name, projectId = task.ProjectId, title = task.Title },
+                string.Empty,
+                created.OrganizationId,
+                new { projectId = created.ProjectId, title = created.TaskTitle },
                 cancellationToken);
         }
 
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, orgId);
-        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
-        boardCacheVersion.BumpProject(task.ProjectId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, created.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, created.AssigneeId);
+        boardCacheVersion.BumpProject(created.ProjectId);
 
-        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [task], cancellationToken);
+        var detached = await taskRepository.GetDetachedTaskByIdAsync(created.TaskId, cancellationToken);
+        if (detached is null)
+        {
+            return null;
+        }
+        var dtoList = await taskReadModelAssembler.ToTaskDtosAsync([detached], cancellationToken);
 
         await webhookDispatcher.DispatchOrganizationEventAsync(
-            orgId,
+            created.OrganizationId,
             WebhookEventTypes.TaskCreated,
-            new { taskId = task.Id, projectId = task.ProjectId, title = task.Title },
+            new { taskId = created.TaskId, projectId = created.ProjectId, title = created.TaskTitle },
             cancellationToken);
 
-        return dtoList[0];
-    }
-
-    private static DateTime? ResolveDueDateUtc(
-        CreateTaskFromTemplateOverrides? overrides,
-        TaskTemplate template,
-        DateTime nowUtc)
-    {
-        if (overrides?.DueDateUtc is { } overrideDue)
-        {
-            return overrideDue;
-        }
-
-        if (template.DefaultDueDaysFromNow is { } dueDays)
-        {
-            return nowUtc.AddDays(dueDays);
-        }
-
-        return null;
+        return dtoList.Count == 0 ? null : dtoList[0];
     }
 }

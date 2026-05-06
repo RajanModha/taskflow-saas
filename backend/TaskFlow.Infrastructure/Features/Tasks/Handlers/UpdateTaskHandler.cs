@@ -1,22 +1,20 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Application.Notifications;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Email;
-using TaskFlow.Infrastructure.Features.Tasks;
-using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class UpdateTaskHandler(
-    TaskFlowDbContext dbContext,
+    ITaskRepository taskRepository,
+    ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IOptions<EmailSettings> emailSettings,
     INotificationService notificationService,
@@ -28,215 +26,162 @@ public sealed class UpdateTaskHandler(
 {
     public async System.Threading.Tasks.Task<TaskDto?> Handle(UpdateTaskCommand request, CancellationToken cancellationToken)
     {
-        var task = await dbContext.Tasks
-            .FirstOrDefaultAsync(t => t.Id == request.TaskId, cancellationToken);
-
-        if (task is null)
-        {
-            return null;
-        }
-
-        var previousStatus = task.Status;
-        var previousPriority = task.Priority;
-        var previousAssigneeId = task.AssigneeId;
-        var previousDue = task.DueDateUtc;
-
-        string? previousAssigneeName = null;
-        if (previousAssigneeId is { } prevAid)
-        {
-            var prevUser = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == prevAid, cancellationToken);
-            previousAssigneeName = prevUser?.UserName;
-        }
-
-        ApplicationUser? assignee = null;
-        if (request.AssigneeId is { } newAssigneeId)
-        {
-            assignee = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == newAssigneeId, cancellationToken);
-            if (assignee is null || assignee.OrganizationId != task.OrganizationId)
-            {
-                return null;
-            }
-        }
-
-        if (request.TagIds is not null &&
-            !await TaskTagging.ValidateTagIdsInOrganizationAsync(
-                dbContext,
-                task.OrganizationId,
+        var result = await taskRepository.UpdateTaskAsync(
+            new UpdateTaskMutationInput(
+                request.TaskId,
+                request.Title,
+                request.Description,
+                request.Status,
+                request.Priority,
+                request.DueDateUtc,
+                request.AssigneeId,
                 request.TagIds,
-                cancellationToken))
+                request.MilestoneId),
+            cancellationToken);
+        if (result is null)
         {
             return null;
         }
-
-        if (request.MilestoneId is { } newMilestoneId)
-        {
-            var milestoneOk = await dbContext.Milestones
-                .AsNoTracking()
-                .AnyAsync(
-                    m => m.Id == newMilestoneId && m.ProjectId == task.ProjectId,
-                    cancellationToken);
-            if (!milestoneOk)
-            {
-                return null;
-            }
-        }
-
-        task.Title = request.Title;
-        task.Description = request.Description;
-        task.Status = request.Status;
-        task.Priority = request.Priority;
-        task.DueDateUtc = request.DueDateUtc;
-        task.AssigneeId = request.AssigneeId;
-        task.MilestoneId = request.MilestoneId;
-        task.UpdatedAtUtc = DateTime.UtcNow;
-
-        if (previousAssigneeId != task.AssigneeId || previousDue != task.DueDateUtc)
-        {
-            task.ReminderSent = false;
-        }
-
-        if (request.TagIds is not null)
-        {
-            await TaskTagging.ReplaceTaskTagsAsync(dbContext, task.Id, request.TagIds, cancellationToken);
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
 
         if (currentUser.UserId is { } actorUserId)
         {
-            var actor = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == actorUserId, cancellationToken);
-            var actorName = actor?.UserName ?? string.Empty;
-
-            if (previousStatus != request.Status)
+            if (result.PreviousStatus != result.CurrentStatus)
             {
                 await activityLogger.LogAsync(
                     ActivityEntityTypes.Task,
-                    task.Id,
+                    result.TaskId,
                     ActivityActions.TaskStatusChanged,
                     actorUserId,
-                    actorName,
-                    task.OrganizationId,
-                    new { from = previousStatus.ToString(), to = request.Status.ToString() },
+                    string.Empty,
+                    result.OrganizationId,
+                    new { from = result.PreviousStatus.ToString(), to = result.CurrentStatus.ToString() },
                     cancellationToken);
             }
 
-            if (previousPriority != request.Priority)
+            if (result.PreviousPriority != result.CurrentPriority)
             {
                 await activityLogger.LogAsync(
                     ActivityEntityTypes.Task,
-                    task.Id,
+                    result.TaskId,
                     ActivityActions.TaskPriorityChanged,
                     actorUserId,
-                    actorName,
-                    task.OrganizationId,
-                    new { from = previousPriority.ToString(), to = request.Priority.ToString() },
+                    string.Empty,
+                    result.OrganizationId,
+                    new { from = result.PreviousPriority.ToString(), to = result.CurrentPriority.ToString() },
                     cancellationToken);
             }
 
-            if (previousDue != request.DueDateUtc)
+            if (result.PreviousDueDateUtc != result.CurrentDueDateUtc)
             {
                 await activityLogger.LogAsync(
                     ActivityEntityTypes.Task,
-                    task.Id,
+                    result.TaskId,
                     ActivityActions.TaskDueDateChanged,
                     actorUserId,
-                    actorName,
-                    task.OrganizationId,
-                    new { from = previousDue, to = request.DueDateUtc },
+                    string.Empty,
+                    result.OrganizationId,
+                    new { from = result.PreviousDueDateUtc, to = result.CurrentDueDateUtc },
                     cancellationToken);
             }
 
-            if (previousAssigneeId != request.AssigneeId)
+            if (result.PreviousAssigneeId != result.CurrentAssigneeId)
             {
-                if (request.AssigneeId is null)
+                if (result.CurrentAssigneeId is null)
                 {
                     await activityLogger.LogAsync(
                         ActivityEntityTypes.Task,
-                        task.Id,
+                        result.TaskId,
                         ActivityActions.TaskUnassigned,
                         actorUserId,
-                        actorName,
-                        task.OrganizationId,
-                        new { previousAssigneeId, previousAssigneeName },
+                        string.Empty,
+                        result.OrganizationId,
+                        new { previousAssigneeId = result.PreviousAssigneeId, previousAssigneeName = result.PreviousAssigneeUserName },
                         cancellationToken);
                 }
-                else if (assignee is not null)
+                else if (result.CurrentAssigneeId is { } activityAssigneeId)
                 {
-                    var assigneeName = assignee.DisplayName ?? assignee.UserName ?? string.Empty;
+                    var assigneeName = result.CurrentAssigneeDisplayName ?? result.CurrentAssigneeUserName ?? string.Empty;
                     await activityLogger.LogAsync(
                         ActivityEntityTypes.Task,
-                        task.Id,
+                        result.TaskId,
                         ActivityActions.TaskAssigned,
                         actorUserId,
-                        actorName,
-                        task.OrganizationId,
-                        new { assigneeId = assignee.Id, assigneeName },
+                        string.Empty,
+                        result.OrganizationId,
+                        new { assigneeId = activityAssigneeId, assigneeName },
                         cancellationToken);
                 }
             }
         }
 
-        var assigneeChanged = previousAssigneeId != task.AssigneeId;
-        if (assigneeChanged && task.AssigneeId is not null && assignee is not null)
+        var assigneeChanged = result.PreviousAssigneeId != result.CurrentAssigneeId;
+        if (assigneeChanged &&
+            result.CurrentAssigneeId is { } assigneeId &&
+            result.CurrentAssigneeEmail is { Length: > 0 } toEmail)
         {
-            var project = await dbContext.Projects
-                .AsNoTracking()
-                .FirstAsync(p => p.Id == task.ProjectId && p.OrganizationId == task.OrganizationId, cancellationToken);
-
-            await TaskAssignmentNotifier.NotifyAssigneeAsync(
-                dbContext,
-                notificationService,
-                emailSettings,
-                currentUser.UserId,
-                task,
-                project.Name,
-                assignee,
+            var assigneeName = result.CurrentAssigneeDisplayName ?? result.CurrentAssigneeUserName ?? "there";
+            var assignerName = "Someone";
+            var baseUrl = emailSettings.Value.FrontendBaseUrl.TrimEnd('/');
+            var taskUrl = $"{baseUrl}/tasks/{result.TaskId}";
+            await notificationService.CreateAsync(
+                assigneeId,
+                "task.assigned",
+                "Task assigned",
+                $"{assignerName} assigned you '{result.TaskTitle}'",
+                entityType: "Task",
+                entityId: result.TaskId,
+                sendEmail: true,
+                toEmail: toEmail,
+                emailSubject: $"You've been assigned: {result.TaskTitle}",
+                emailHtml: EmailTemplates.TaskAssigned(
+                    assigneeName,
+                    result.TaskTitle,
+                    result.ProjectName,
+                    assignerName,
+                    taskUrl),
                 cancellationToken);
         }
 
         DashboardCacheInvalidation.InvalidateAfterTaskMutation(
             cache,
-            task.OrganizationId,
+            result.OrganizationId,
             currentUser.UserId,
-            previousAssigneeId,
-            task.AssigneeId);
-        boardCacheVersion.BumpProject(task.ProjectId);
+            result.PreviousAssigneeId,
+            result.CurrentAssigneeId);
+        boardCacheVersion.BumpProject(result.ProjectId);
 
-        var refreshed = await dbContext.Tasks.AsNoTracking()
-            .FirstAsync(t => t.Id == task.Id, cancellationToken);
-        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [refreshed], cancellationToken);
-
-        if (previousStatus != request.Status)
+        if (result.PreviousStatus != result.CurrentStatus)
         {
             await webhookDispatcher.DispatchOrganizationEventAsync(
-                task.OrganizationId,
+                result.OrganizationId,
                 WebhookEventTypes.TaskStatusChanged,
                 new
                 {
-                    taskId = task.Id,
-                    projectId = task.ProjectId,
-                    fromStatus = previousStatus.ToString(),
-                    toStatus = request.Status.ToString(),
+                    taskId = result.TaskId,
+                    projectId = result.ProjectId,
+                    fromStatus = result.PreviousStatus.ToString(),
+                    toStatus = result.CurrentStatus.ToString(),
                 },
                 cancellationToken);
         }
 
-        if (previousAssigneeId != request.AssigneeId && request.AssigneeId is not null)
+        if (result.PreviousAssigneeId != result.CurrentAssigneeId && result.CurrentAssigneeId is { } webhookAssigneeId)
         {
             await webhookDispatcher.DispatchOrganizationEventAsync(
-                task.OrganizationId,
+                result.OrganizationId,
                 WebhookEventTypes.TaskAssigned,
-                new { taskId = task.Id, projectId = task.ProjectId, assigneeId = request.AssigneeId.Value },
+                new { taskId = result.TaskId, projectId = result.ProjectId, assigneeId = webhookAssigneeId },
                 cancellationToken);
         }
 
-        return dtoList[0];
+        var detached = await taskRepository.GetDetachedTaskByIdAsync(result.TaskId, cancellationToken);
+        if (detached is null)
+        {
+            return null;
+        }
+
+        var dtoList = await taskReadModelAssembler.ToTaskDtosAsync([detached], cancellationToken);
+        return dtoList.Count == 0 ? null : dtoList[0];
     }
 }
 

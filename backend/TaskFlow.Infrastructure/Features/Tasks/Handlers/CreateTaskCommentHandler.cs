@@ -1,23 +1,19 @@
 using System.Text.Encodings.Web;
 using MediatR;
 using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Notifications;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class CreateTaskCommentHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
     ICurrentUser currentUser,
-    TimeProvider timeProvider,
     IBoardCacheVersion boardCacheVersion,
     IActivityLogger activityLogger,
     INotificationService notificationService,
@@ -27,79 +23,57 @@ public sealed class CreateTaskCommentHandler(
         CreateTaskCommentCommand request,
         CancellationToken cancellationToken)
     {
-        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(
-            dbContext,
-            currentTenant,
+        var result = await taskRepository.CreateTaskCommentAsync(
             request.TaskId,
+            currentUser.UserId,
+            request.Content,
             cancellationToken);
-
-        if (task is null)
+        if (result.StatusCode != StatusCodes.Status201Created || result.Comment is null)
         {
-            return new CreateTaskCommentResult(null, StatusCodes.Status404NotFound);
+            return new CreateTaskCommentResult(null, result.StatusCode);
         }
-
-        if (currentUser.UserId is not { } authorId)
-        {
-            return new CreateTaskCommentResult(null, StatusCodes.Status401Unauthorized);
-        }
-
-        var encoded = HtmlEncoder.Default.Encode(request.Content.Trim());
-        if (encoded.Length > 4000)
-        {
-            return new CreateTaskCommentResult(null, StatusCodes.Status400BadRequest);
-        }
-
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        var entity = new TaskFlow.Domain.Entities.Comment
-        {
-            Id = Guid.NewGuid(),
-            TaskId = request.TaskId,
-            AuthorId = authorId,
-            Content = encoded,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = now,
-            IsEdited = false,
-            IsDeleted = false,
-        };
-
-        await dbContext.Comments.AddAsync(entity, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        var author = await dbContext.Users
-            .AsNoTracking()
-            .FirstAsync(u => u.Id == authorId, cancellationToken);
 
         await activityLogger.LogAsync(
             ActivityEntityTypes.Task,
             request.TaskId,
             ActivityActions.TaskCommented,
-            authorId,
-            author.UserName ?? string.Empty,
-            task.OrganizationId,
-            new { commentId = entity.Id },
+            currentUser.UserId ?? Guid.Empty,
+            string.Empty,
+            result.OrganizationId,
+            new { commentId = result.Comment.Id },
             cancellationToken);
-        if (task.AssigneeId is { } assigneeId && assigneeId != authorId)
+        if (result.AssigneeId is { } assigneeId &&
+            result.Comment.AuthorId is { } authorId &&
+            assigneeId != authorId)
         {
-            var authorName = author.DisplayName?.Trim() is { Length: > 0 } dn
-                ? dn
-                : author.UserName ?? "Someone";
-
             await notificationService.CreateAsync(
                 assigneeId,
                 "task.commented",
                 "New comment",
-                $"{authorName} commented on '{task.Title}'",
+                "A new comment was added",
                 entityType: "Task",
-                entityId: task.Id,
+                entityId: request.TaskId,
                 ct: cancellationToken);
         }
 
-        boardCacheVersion.BumpProject(task.ProjectId);
+        boardCacheVersion.BumpProject(result.ProjectId);
 
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
-        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, result.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, result.AssigneeId);
 
-        return new CreateTaskCommentResult(CommentMapper.ToDto(entity, author), StatusCodes.Status201Created);
+        var authorDto = result.Comment.AuthorId is { } aid
+            ? new TaskAssigneeDto(aid, result.Comment.AuthorUserName ?? string.Empty, result.Comment.AuthorDisplayName)
+            : null;
+        return new CreateTaskCommentResult(
+            new CommentDto(
+                result.Comment.Id,
+                result.Comment.Content,
+                result.Comment.IsEdited,
+                new DateTimeOffset(result.Comment.CreatedAtUtc, TimeSpan.Zero),
+                new DateTimeOffset(result.Comment.UpdatedAtUtc, TimeSpan.Zero),
+                authorDto,
+                result.Comment.IsDeleted),
+            StatusCodes.Status201Created);
     }
 }
 

@@ -1,17 +1,16 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class DeleteTaskHandler(
-    TaskFlowDbContext dbContext,
+    ITaskRepository taskRepository,
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
@@ -20,48 +19,37 @@ public sealed class DeleteTaskHandler(
 {
     public async Task<bool> Handle(DeleteTaskCommand request, CancellationToken cancellationToken)
     {
-        var task = await dbContext.Tasks
-            .FirstOrDefaultAsync(t => t.Id == request.TaskId, cancellationToken);
-
-        if (task is null)
+        var deleted = await taskRepository.SoftDeleteTaskAsync(request.TaskId, cancellationToken);
+        if (deleted is null)
         {
             return false;
         }
 
-        var orgId = task.OrganizationId;
-        var taskId = task.Id;
-        var title = task.Title;
-        var projectId = task.ProjectId;
-        var assigneeId = task.AssigneeId;
-        task.IsDeleted = true;
-        task.DeletedAt = DateTime.UtcNow;
-        task.UpdatedAtUtc = DateTime.UtcNow;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
         if (currentUser.UserId is { } actorId)
         {
-            var actor = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == actorId, cancellationToken);
-            var actorName = actor?.UserName ?? string.Empty;
             await activityLogger.LogAsync(
                 ActivityEntityTypes.Task,
-                taskId,
+                deleted.TaskId,
                 ActivityActions.TaskDeleted,
                 actorId,
-                actorName,
-                orgId,
-                new { title },
+                string.Empty,
+                deleted.OrganizationId,
+                new { title = deleted.Title },
                 cancellationToken);
         }
 
-        DashboardCacheInvalidation.InvalidateAfterTaskMutation(cache, orgId, currentUser.UserId, assigneeId, null);
-        boardCacheVersion.BumpProject(projectId);
+        DashboardCacheInvalidation.InvalidateAfterTaskMutation(
+            cache,
+            deleted.OrganizationId,
+            currentUser.UserId,
+            deleted.AssigneeId,
+            null);
+        boardCacheVersion.BumpProject(deleted.ProjectId);
 
         await webhookDispatcher.DispatchOrganizationEventAsync(
-            orgId,
+            deleted.OrganizationId,
             WebhookEventTypes.TaskDeleted,
-            new { taskId, projectId, title },
+            new { taskId = deleted.TaskId, projectId = deleted.ProjectId, title = deleted.Title },
             cancellationToken);
 
         return true;

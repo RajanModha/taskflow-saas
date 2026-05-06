@@ -5,143 +5,70 @@ using TaskFlow.Application.Tasks;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Persistence;
+using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class AddTaskDependencyCommandHandler(
-    TaskFlowDbContext dbContext,
+    ITaskRepository taskRepository,
     IBoardCacheVersion boardCacheVersion)
     : IRequestHandler<AddTaskDependencyCommand, AddTaskDependencyResult>
 {
     public async Task<AddTaskDependencyResult> Handle(AddTaskDependencyCommand request, CancellationToken cancellationToken)
     {
-        if (request.TaskId == request.BlockingTaskId)
+        var result = await taskRepository.AddTaskDependencyAsync(request.TaskId, request.BlockingTaskId, cancellationToken);
+        switch (result.Outcome)
         {
-            return new AddTaskDependencyResult.SelfReference();
+            case "self":
+                return new AddTaskDependencyResult.SelfReference();
+            case "not_found":
+                return new AddTaskDependencyResult.NotFound();
+            case "duplicate":
+                return new AddTaskDependencyResult.Duplicate();
+            case "max":
+                return new AddTaskDependencyResult.MaxDependencies();
+            case "cycle":
+                return new AddTaskDependencyResult.Cycle();
+            case "ok":
+                if (result.BlockedProjectId is { } blockedProjectId)
+                {
+                    boardCacheVersion.BumpProject(blockedProjectId);
+                }
+                if (result.BlockingProjectId is { } blockingProjectId && result.BlockingProjectId != result.BlockedProjectId)
+                {
+                    boardCacheVersion.BumpProject(blockingProjectId);
+                }
+                return new AddTaskDependencyResult.Ok(
+                    new DependencyDto(
+                        request.TaskId,
+                        new TaskBlockingSummaryDto(
+                            result.BlockingTaskId ?? Guid.Empty,
+                            result.BlockingTaskTitle ?? string.Empty,
+                            result.BlockingTaskStatus ?? DomainTaskStatus.Backlog)));
+            default:
+                return new AddTaskDependencyResult.NotFound();
         }
-
-        var blocked = await dbContext.Tasks
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == request.TaskId, cancellationToken);
-        var blocking = await dbContext.Tasks
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == request.BlockingTaskId, cancellationToken);
-
-        if (blocked is null || blocking is null)
-        {
-            return new AddTaskDependencyResult.NotFound();
-        }
-
-        if (blocked.OrganizationId != blocking.OrganizationId)
-        {
-            return new AddTaskDependencyResult.NotFound();
-        }
-
-        var existing = await dbContext.TaskDependencies
-            .AnyAsync(
-                d => d.BlockedTaskId == request.TaskId && d.BlockingTaskId == request.BlockingTaskId,
-                cancellationToken);
-        if (existing)
-        {
-            return new AddTaskDependencyResult.Duplicate();
-        }
-
-        var count = await dbContext.TaskDependencies
-            .CountAsync(d => d.BlockedTaskId == request.TaskId, cancellationToken);
-        if (count >= 10)
-        {
-            return new AddTaskDependencyResult.MaxDependencies();
-        }
-
-        if (await WouldCreateCycleAsync(dbContext, request.TaskId, request.BlockingTaskId, cancellationToken))
-        {
-            return new AddTaskDependencyResult.Cycle();
-        }
-
-        dbContext.TaskDependencies.Add(
-            new TaskDependency
-            {
-                BlockedTaskId = request.TaskId,
-                BlockingTaskId = request.BlockingTaskId,
-            });
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        boardCacheVersion.BumpProject(blocked.ProjectId);
-        if (blocking.ProjectId != blocked.ProjectId)
-        {
-            boardCacheVersion.BumpProject(blocking.ProjectId);
-        }
-
-        var dto = new DependencyDto(
-            request.TaskId,
-            new TaskBlockingSummaryDto(blocking.Id, blocking.Title, blocking.Status));
-        return new AddTaskDependencyResult.Ok(dto);
-    }
-
-    private static async Task<bool> WouldCreateCycleAsync(
-        TaskFlowDbContext db,
-        Guid from,
-        Guid to,
-        CancellationToken cancellationToken)
-    {
-        var visited = new HashSet<Guid>();
-        var queue = new Queue<Guid>();
-        queue.Enqueue(to);
-        while (queue.Count > 0)
-        {
-            var current = queue.Dequeue();
-            if (current == from)
-            {
-                return true;
-            }
-
-            if (!visited.Add(current))
-            {
-                continue;
-            }
-
-            var deps = await db.TaskDependencies
-                .AsNoTracking()
-                .Where(d => d.BlockedTaskId == current)
-                .Select(d => d.BlockingTaskId)
-                .ToListAsync(cancellationToken);
-            foreach (var d in deps)
-            {
-                queue.Enqueue(d);
-            }
-        }
-
-        return false;
     }
 }
 
 public sealed class RemoveTaskDependencyCommandHandler(
-    TaskFlowDbContext dbContext,
+    ITaskRepository taskRepository,
     IBoardCacheVersion boardCacheVersion)
     : IRequestHandler<RemoveTaskDependencyCommand, bool>
 {
     public async Task<bool> Handle(RemoveTaskDependencyCommand request, CancellationToken cancellationToken)
     {
-        var blocked = await dbContext.Tasks
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == request.TaskId, cancellationToken);
-        var blocking = await dbContext.Tasks
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == request.BlockingTaskId, cancellationToken);
-        if (blocked is null || blocking is null)
-        {
-            return false;
-        }
-
-        var deleted = await dbContext.TaskDependencies
-            .Where(d => d.BlockedTaskId == request.TaskId && d.BlockingTaskId == request.BlockingTaskId)
-            .ExecuteDeleteAsync(cancellationToken) > 0;
+        var result = await taskRepository.RemoveTaskDependencyAsync(request.TaskId, request.BlockingTaskId, cancellationToken);
+        var deleted = result.Deleted;
         if (deleted)
         {
-            boardCacheVersion.BumpProject(blocked.ProjectId);
-            if (blocking.ProjectId != blocked.ProjectId)
+            if (result.BlockedProjectId is { } blockedProjectId)
             {
-                boardCacheVersion.BumpProject(blocking.ProjectId);
+                boardCacheVersion.BumpProject(blockedProjectId);
+            }
+            if (result.BlockingProjectId is { } blockingProjectId && result.BlockingProjectId != result.BlockedProjectId)
+            {
+                boardCacheVersion.BumpProject(blockingProjectId);
             }
         }
 

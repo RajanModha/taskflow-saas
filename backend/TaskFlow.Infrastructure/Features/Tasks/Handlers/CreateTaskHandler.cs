@@ -1,26 +1,20 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Workspaces;
-using TaskFlow.Application.Common;
 using TaskFlow.Application.Notifications;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Email;
-using TaskFlow.Infrastructure.Features.Tasks;
-using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
-using DomainTask = TaskFlow.Domain.Entities.Task;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class CreateTaskHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
+    ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IOptions<EmailSettings> emailSettings,
     INotificationService notificationService,
@@ -31,126 +25,79 @@ public sealed class CreateTaskHandler(
 {
     public async System.Threading.Tasks.Task<TaskDto?> Handle(CreateTaskCommand request, CancellationToken cancellationToken)
     {
-        if (!currentTenant.IsSet)
-        {
-            throw new TenantContextMissingException();
-        }
-
-        var project = await dbContext.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == request.ProjectId, cancellationToken);
-
-        if (project is null)
-        {
-            return null;
-        }
-
-        ApplicationUser? assignee = null;
-        if (request.AssigneeId is { } assigneeId)
-        {
-            assignee = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == assigneeId, cancellationToken);
-            if (assignee is null || assignee.OrganizationId != currentTenant.OrganizationId)
-            {
-                return null;
-            }
-        }
-
-        if (request.TagIds is { Length: > 0 } tagIdsForValidate &&
-            !await TaskTagging.ValidateTagIdsInOrganizationAsync(
-                dbContext,
-                currentTenant.OrganizationId,
-                tagIdsForValidate,
-                cancellationToken))
+        var created = await taskRepository.CreateTaskAsync(
+            new CreateTaskMutationInput(
+                request.ProjectId,
+                request.Title,
+                request.Description,
+                request.Status,
+                request.Priority,
+                request.DueDateUtc,
+                request.AssigneeId,
+                request.TagIds,
+                request.MilestoneId),
+            cancellationToken);
+        if (created is null)
         {
             return null;
         }
 
-        Guid? milestoneId = null;
-        if (request.MilestoneId is { } milestoneIdValue)
+        if (created.AssigneeId is { } assigneeId && created.AssigneeEmail is { Length: > 0 } toEmail)
         {
-            var milestoneOk = await dbContext.Milestones
-                .AsNoTracking()
-                .AnyAsync(
-                    m => m.Id == milestoneIdValue && m.ProjectId == request.ProjectId,
-                    cancellationToken);
-            if (!milestoneOk)
-            {
-                return null;
-            }
-
-            milestoneId = milestoneIdValue;
+            var assigneeName = created.AssigneeDisplayName ?? created.AssigneeUserName ?? "there";
+            var assignerName = "Someone";
+            var baseUrl = emailSettings.Value.FrontendBaseUrl.TrimEnd('/');
+            var taskUrl = $"{baseUrl}/tasks/{created.TaskId}";
+            await notificationService.CreateAsync(
+                assigneeId,
+                "task.assigned",
+                "Task assigned",
+                $"{assignerName} assigned you '{created.TaskTitle}'",
+                entityType: "Task",
+                entityId: created.TaskId,
+                sendEmail: true,
+                toEmail: toEmail,
+                emailSubject: $"You've been assigned: {created.TaskTitle}",
+                emailHtml: EmailTemplates.TaskAssigned(
+                    assigneeName,
+                    created.TaskTitle,
+                    created.ProjectName,
+                    assignerName,
+                    taskUrl),
+                ct: cancellationToken);
         }
 
-        var now = DateTime.UtcNow;
-
-        var task = new DomainTask
-        {
-            Id = Guid.NewGuid(),
-            OrganizationId = currentTenant.OrganizationId,
-            ProjectId = request.ProjectId,
-            Title = request.Title,
-            Description = request.Description,
-            Status = request.Status,
-            Priority = request.Priority,
-            DueDateUtc = request.DueDateUtc,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = now,
-            AssigneeId = request.AssigneeId,
-            MilestoneId = milestoneId,
-            ReminderSent = false,
-        };
-
-        await dbContext.Tasks.AddAsync(task, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await TaskTagging.ReplaceTaskTagsAsync(dbContext, task.Id, request.TagIds, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        if (assignee is not null)
-        {
-            await TaskAssignmentNotifier.NotifyAssigneeAsync(
-                dbContext,
-                notificationService,
-                emailSettings,
-                currentUser.UserId,
-                task,
-                project.Name,
-                assignee,
-                cancellationToken);
-        }
-
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, currentTenant.OrganizationId);
-        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, request.AssigneeId);
-        boardCacheVersion.BumpProject(task.ProjectId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, created.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, created.AssigneeId);
+        boardCacheVersion.BumpProject(created.ProjectId);
 
         if (currentUser.UserId is { } creatorId)
         {
-            var creator = await dbContext.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == creatorId, cancellationToken);
-            var actorName = creator?.UserName ?? string.Empty;
             await activityLogger.LogAsync(
                 ActivityEntityTypes.Task,
-                task.Id,
+                created.TaskId,
                 ActivityActions.TaskCreated,
                 creatorId,
-                actorName,
-                currentTenant.OrganizationId,
-                new { projectId = task.ProjectId, title = task.Title },
+                string.Empty,
+                created.OrganizationId,
+                new { projectId = created.ProjectId, title = created.TaskTitle },
                 cancellationToken);
         }
 
-        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [task], cancellationToken);
+        var detached = await taskRepository.GetDetachedTaskByIdAsync(created.TaskId, cancellationToken);
+        if (detached is null)
+        {
+            return null;
+        }
+        var dtoList = await taskReadModelAssembler.ToTaskDtosAsync([detached], cancellationToken);
 
         await webhookDispatcher.DispatchOrganizationEventAsync(
-            currentTenant.OrganizationId,
+            created.OrganizationId,
             WebhookEventTypes.TaskCreated,
-            new { taskId = task.Id, projectId = task.ProjectId, title = task.Title },
+            new { taskId = created.TaskId, projectId = created.ProjectId, title = created.TaskTitle },
             cancellationToken);
 
-        return dtoList[0];
+        return dtoList.Count == 0 ? null : dtoList[0];
     }
 }
 

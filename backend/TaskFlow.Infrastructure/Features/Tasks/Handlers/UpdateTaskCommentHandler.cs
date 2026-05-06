@@ -1,83 +1,53 @@
 using System.Text.Encodings.Web;
 using MediatR;
 using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class UpdateTaskCommentHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
     ICurrentUser currentUser,
-    TimeProvider timeProvider,
     IMemoryCache cache) : IRequestHandler<UpdateTaskCommentCommand, UpdateTaskCommentResult>
 {
     public async System.Threading.Tasks.Task<UpdateTaskCommentResult> Handle(
         UpdateTaskCommentCommand request,
         CancellationToken cancellationToken)
     {
-        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(
-            dbContext,
-            currentTenant,
+        var result = await taskRepository.UpdateTaskCommentAsync(
             request.TaskId,
+            request.CommentId,
+            currentUser.UserId,
+            request.Content,
             cancellationToken);
-
-        if (task is null)
+        if (result.Comment is null)
         {
-            return new UpdateTaskCommentResult(null, StatusCodes.Status404NotFound, null);
+            var detail = result.StatusCode == StatusCodes.Status403Forbidden
+                ? "You can only edit your own comments."
+                : result.StatusCode == StatusCodes.Status400BadRequest
+                    ? "Content is too long after encoding."
+                    : null;
+            return new UpdateTaskCommentResult(null, result.StatusCode, detail);
         }
 
-        var comment = await dbContext.Comments
-            .FirstOrDefaultAsync(
-                c => c.Id == request.CommentId && c.TaskId == request.TaskId,
-                cancellationToken);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, result.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, result.AssigneeId);
 
-        if (comment is null)
-        {
-            return new UpdateTaskCommentResult(null, StatusCodes.Status404NotFound, null);
-        }
+        var author = result.Comment.AuthorId is { } aid
+            ? new TaskAssigneeDto(aid, result.Comment.AuthorUserName ?? string.Empty, result.Comment.AuthorDisplayName)
+            : null;
 
-        if (currentUser.UserId != comment.AuthorId)
-        {
-            return new UpdateTaskCommentResult(
-                null,
-                StatusCodes.Status403Forbidden,
-                "You can only edit your own comments.");
-        }
-
-        if (comment.IsDeleted)
-        {
-            return new UpdateTaskCommentResult(null, StatusCodes.Status404NotFound, null);
-        }
-
-        var encoded = HtmlEncoder.Default.Encode(request.Content.Trim());
-        if (encoded.Length > 4000)
-        {
-            return new UpdateTaskCommentResult(null, StatusCodes.Status400BadRequest, "Content is too long after encoding.");
-        }
-
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        comment.Content = encoded;
-        comment.IsEdited = true;
-        comment.UpdatedAtUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
-        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
-
-        var author = await dbContext.Users
-            .AsNoTracking()
-            .FirstAsync(u => u.Id == comment.AuthorId, cancellationToken);
-
-        return new UpdateTaskCommentResult(
-            CommentMapper.ToDto(comment, author),
-            StatusCodes.Status200OK,
-            null);
+        return new UpdateTaskCommentResult(new CommentDto(
+            result.Comment.Id,
+            result.Comment.Content,
+            result.Comment.IsEdited,
+            new DateTimeOffset(result.Comment.CreatedAtUtc, TimeSpan.Zero),
+            new DateTimeOffset(result.Comment.UpdatedAtUtc, TimeSpan.Zero),
+            author,
+            result.Comment.IsDeleted), StatusCodes.Status200OK, null);
     }
 }

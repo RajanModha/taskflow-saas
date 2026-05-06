@@ -1,17 +1,14 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class DeleteChecklistItemHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
     ICurrentUser currentUser,
     IBoardCacheVersion boardCacheVersion,
     IMemoryCache cache)
@@ -19,30 +16,17 @@ public sealed class DeleteChecklistItemHandler(
 {
     public async Task<bool> Handle(DeleteChecklistItemCommand request, CancellationToken cancellationToken)
     {
-        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(
-            dbContext,
-            currentTenant,
+        var result = await taskRepository.DeleteChecklistItemAsync(
             request.TaskId,
+            request.ItemId,
             cancellationToken);
-
-        if (task is null)
+        if (result is null || !result.Deleted)
         {
             return false;
         }
-
-        var deleted = await dbContext.ChecklistItems
-            .Where(c => c.TaskId == request.TaskId && c.Id == request.ItemId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        if (deleted == 0)
-        {
-            return false;
-        }
-
-        boardCacheVersion.BumpProject(task.ProjectId);
-
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
-        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
+        boardCacheVersion.BumpProject(result.ProjectId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, result.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, result.AssigneeId);
 
         return true;
     }

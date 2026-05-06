@@ -1,97 +1,38 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Domain.Entities;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class AddChecklistItemHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
     ICurrentUser currentUser,
     IBoardCacheVersion boardCacheVersion,
-    TimeProvider timeProvider,
     IMemoryCache cache)
     : IRequestHandler<AddChecklistItemCommand, ChecklistItemDto?>
 {
     public async Task<ChecklistItemDto?> Handle(AddChecklistItemCommand request, CancellationToken cancellationToken)
     {
-        var task = await TaskTenantGuard.GetTaskInCurrentTenantAsync(
-            dbContext,
-            currentTenant,
+        var result = await taskRepository.AddChecklistItemAsync(
             request.TaskId,
+            request.Title,
+            request.InsertAfterOrder,
             cancellationToken);
-
-        if (task is null)
+        if (result is null)
         {
             return null;
         }
-
-        await using var tx = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        var items = await dbContext.ChecklistItems
-            .Where(c => c.TaskId == request.TaskId)
-            .OrderBy(c => c.Order)
-            .ToListAsync(cancellationToken);
-
-        var title = request.Title.Trim();
-        var maxOrder = items.Count == 0 ? 0 : items.Max(i => i.Order);
-        int newOrder;
-        if (request.InsertAfterOrder is null)
-        {
-            newOrder = maxOrder + 1;
-        }
-        else
-        {
-            var after = request.InsertAfterOrder.Value;
-            if (maxOrder == 0 || after >= maxOrder)
-            {
-                newOrder = maxOrder + 1;
-            }
-            else if (after <= 0)
-            {
-                foreach (var i in items)
-                {
-                    i.Order += 1;
-                }
-
-                newOrder = 1;
-            }
-            else
-            {
-                foreach (var i in items.Where(x => x.Order > after))
-                {
-                    i.Order += 1;
-                }
-
-                newOrder = after + 1;
-            }
-        }
-
-        var entity = new ChecklistItem
-        {
-            Id = Guid.NewGuid(),
-            TaskId = request.TaskId,
-            Title = title,
-            IsCompleted = false,
-            Order = newOrder,
-            CreatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
-            CompletedAtUtc = null,
-        };
-
-        await dbContext.ChecklistItems.AddAsync(entity, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await tx.CommitAsync(cancellationToken);
-
-        boardCacheVersion.BumpProject(task.ProjectId);
-
-        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
-        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
-
-        return ChecklistItemMapper.ToDto(entity);
+        boardCacheVersion.BumpProject(result.ProjectId);
+        DashboardCacheInvalidation.InvalidateOrganizationStats(cache, result.OrganizationId);
+        DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, result.AssigneeId);
+        return new ChecklistItemDto(
+            result.Item.Id,
+            result.Item.Title,
+            result.Item.IsCompleted,
+            result.Item.Order,
+            result.Item.CompletedAtUtc);
     }
 }

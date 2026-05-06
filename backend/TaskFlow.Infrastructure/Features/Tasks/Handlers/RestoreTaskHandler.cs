@@ -1,18 +1,15 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Application.Tenancy;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Features.Tasks;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class RestoreTaskHandler(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    ITaskRepository taskRepository,
+    ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion)
@@ -20,27 +17,27 @@ public sealed class RestoreTaskHandler(
 {
     public async Task<TaskDto?> Handle(RestoreTaskCommand request, CancellationToken cancellationToken)
     {
-        var task = await dbContext.Tasks
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(
-                t => t.Id == request.TaskId &&
-                     currentTenant.IsSet &&
-                     t.OrganizationId == currentTenant.OrganizationId,
-                cancellationToken);
-        if (task is null || !task.IsDeleted)
+        var restored = await taskRepository.RestoreTaskAsync(request.TaskId, cancellationToken);
+        if (restored is null)
         {
             return null;
         }
 
-        task.IsDeleted = false;
-        task.DeletedAt = null;
-        task.UpdatedAtUtc = DateTime.UtcNow;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        DashboardCacheInvalidation.InvalidateAfterTaskMutation(
+            cache,
+            restored.OrganizationId,
+            currentUser.UserId,
+            null,
+            restored.AssigneeId);
+        boardCacheVersion.BumpProject(restored.ProjectId);
 
-        DashboardCacheInvalidation.InvalidateAfterTaskMutation(cache, task.OrganizationId, currentUser.UserId, null, task.AssigneeId);
-        boardCacheVersion.BumpProject(task.ProjectId);
+        var detached = await taskRepository.GetDetachedTaskByIdAsync(restored.TaskId, cancellationToken);
+        if (detached is null)
+        {
+            return null;
+        }
 
-        var dto = await TaskProjection.ToDtosAsync(dbContext, [task], cancellationToken);
-        return dto[0];
+        var dto = await taskReadModelAssembler.ToTaskDtosAsync([detached], cancellationToken);
+        return dto.Count == 0 ? null : dto[0];
     }
 }

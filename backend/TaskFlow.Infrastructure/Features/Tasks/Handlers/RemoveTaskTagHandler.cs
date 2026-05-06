@@ -1,16 +1,15 @@
 using MediatR;
 using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Infrastructure.Features.Dashboard;
 using TaskFlow.Application.Tasks;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class RemoveTaskTagHandler(
-    TaskFlowDbContext dbContext,
+    ITaskRepository taskRepository,
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion)
@@ -18,25 +17,17 @@ public sealed class RemoveTaskTagHandler(
 {
     public async System.Threading.Tasks.Task<int> Handle(RemoveTaskTagCommand request, CancellationToken cancellationToken)
     {
-        var task = await dbContext.Tasks
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == request.TaskId, cancellationToken);
-
-        if (task is null)
+        var result = await taskRepository.RemoveTaskTagAsync(request.TaskId, request.TagId, cancellationToken);
+        if (!result.TaskFound)
         {
             return StatusCodes.Status404NotFound;
         }
 
-        var projectId = task.ProjectId;
-        var removed = await dbContext.TaskTags
-            .Where(tt => tt.TaskId == request.TaskId && tt.TagId == request.TagId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        if (removed > 0)
+        if (result.Changed)
         {
-            DashboardCacheInvalidation.InvalidateOrganizationStats(cache, task.OrganizationId);
-            DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, task.AssigneeId);
-            boardCacheVersion.BumpProject(projectId);
+            DashboardCacheInvalidation.InvalidateOrganizationStats(cache, result.OrganizationId);
+            DashboardCacheInvalidation.InvalidateMyStatsForUsers(cache, currentUser.UserId, result.AssigneeId);
+            boardCacheVersion.BumpProject(result.ProjectId);
         }
 
         return StatusCodes.Status204NoContent;

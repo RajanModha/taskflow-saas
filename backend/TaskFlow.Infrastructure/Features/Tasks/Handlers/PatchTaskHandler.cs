@@ -1,19 +1,18 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using Task = System.Threading.Tasks.Task;
 using Microsoft.Extensions.Caching.Memory;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Application.Workspaces;
 using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Features.Dashboard;
-using TaskFlow.Infrastructure.Features.Tasks;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Features.Tasks.Handlers;
 
 public sealed class PatchTaskHandler(
-    TaskFlowDbContext dbContext,
+    ITaskRepository taskRepository,
+    ITaskReadModelAssembler taskReadModelAssembler,
     ICurrentUser currentUser,
     IMemoryCache cache,
     IBoardCacheVersion boardCacheVersion,
@@ -22,101 +21,68 @@ public sealed class PatchTaskHandler(
 {
     public async Task<TaskDto?> Handle(PatchTaskCommand request, CancellationToken cancellationToken)
     {
-        var task = await dbContext.Tasks.FirstOrDefaultAsync(t => t.Id == request.TaskId, cancellationToken);
-        if (task is null)
+        var result = await taskRepository.PatchTaskAsync(
+            new PatchTaskMutationInput(
+                request.TaskId,
+                request.Title,
+                request.HasTitle,
+                request.Description,
+                request.HasDescription,
+                request.Status,
+                request.HasStatus,
+                request.Priority,
+                request.HasPriority,
+                request.DueDateUtc,
+                request.HasDueDateUtc,
+                request.AssigneeId,
+                request.HasAssigneeId),
+            cancellationToken);
+        if (result is null)
         {
             return null;
         }
 
-        if (request.HasAssigneeId && request.AssigneeId is { } assigneeId)
-        {
-            var exists = await dbContext.Users.AnyAsync(
-                u => u.Id == assigneeId && u.OrganizationId == task.OrganizationId,
-                cancellationToken);
-            if (!exists)
-            {
-                return null;
-            }
-        }
-
-        var previousAssigneeId = task.AssigneeId;
-        var previousDueDate = task.DueDateUtc;
-        var previousStatus = task.Status;
-        if (request.HasTitle)
-        {
-            task.Title = request.Title!;
-        }
-
-        if (request.HasDescription)
-        {
-            task.Description = request.Description;
-        }
-
-        if (request.HasStatus && request.Status is { } status)
-        {
-            task.Status = status;
-        }
-
-        if (request.HasPriority && request.Priority is { } priority)
-        {
-            task.Priority = priority;
-        }
-
-        if (request.HasDueDateUtc)
-        {
-            task.DueDateUtc = request.DueDateUtc;
-        }
-
-        if (request.HasAssigneeId)
-        {
-            task.AssigneeId = request.AssigneeId;
-        }
-
-        if (previousAssigneeId != task.AssigneeId || previousDueDate != task.DueDateUtc)
-        {
-            task.ReminderSent = false;
-        }
-
-        task.UpdatedAtUtc = DateTime.UtcNow;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
         DashboardCacheInvalidation.InvalidateAfterTaskMutation(
             cache,
-            task.OrganizationId,
+            result.OrganizationId,
             currentUser.UserId,
-            previousAssigneeId,
-            task.AssigneeId);
-        boardCacheVersion.BumpProject(task.ProjectId);
+            result.PreviousAssigneeId,
+            result.CurrentAssigneeId);
+        boardCacheVersion.BumpProject(result.ProjectId);
 
-        var refreshed = await dbContext.Tasks.AsNoTracking().FirstAsync(t => t.Id == task.Id, cancellationToken);
-        var dtoList = await TaskProjection.ToDtosAsync(dbContext, [refreshed], cancellationToken);
-
-        if (request.HasStatus && request.Status is DomainTaskStatus newStatus && previousStatus != newStatus)
+        if (request.HasStatus && request.Status is DomainTaskStatus newStatus && result.PreviousStatus != newStatus)
         {
             await webhookDispatcher.DispatchOrganizationEventAsync(
-                task.OrganizationId,
+                result.OrganizationId,
                 WebhookEventTypes.TaskStatusChanged,
                 new
                 {
-                    taskId = task.Id,
-                    projectId = task.ProjectId,
-                    fromStatus = previousStatus.ToString(),
+                    taskId = result.TaskId,
+                    projectId = result.ProjectId,
+                    fromStatus = result.PreviousStatus.ToString(),
                     toStatus = newStatus.ToString(),
                 },
                 cancellationToken);
         }
 
         if (request.HasAssigneeId &&
-            previousAssigneeId != task.AssigneeId &&
-            task.AssigneeId is { } newAssigneeId)
+            result.PreviousAssigneeId != result.CurrentAssigneeId &&
+            result.CurrentAssigneeId is { } newAssigneeId)
         {
             await webhookDispatcher.DispatchOrganizationEventAsync(
-                task.OrganizationId,
+                result.OrganizationId,
                 WebhookEventTypes.TaskAssigned,
-                new { taskId = task.Id, projectId = task.ProjectId, assigneeId = newAssigneeId },
+                new { taskId = result.TaskId, projectId = result.ProjectId, assigneeId = newAssigneeId },
                 cancellationToken);
         }
 
-        return dtoList[0];
+        var detached = await taskRepository.GetDetachedTaskByIdAsync(result.TaskId, cancellationToken);
+        if (detached is null)
+        {
+            return null;
+        }
+
+        var dtoList = await taskReadModelAssembler.ToTaskDtosAsync([detached], cancellationToken);
+        return dtoList.Count == 0 ? null : dtoList[0];
     }
 }
