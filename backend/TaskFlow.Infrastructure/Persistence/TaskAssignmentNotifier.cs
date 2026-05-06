@@ -3,10 +3,9 @@ using Microsoft.Extensions.Options;
 using TaskFlow.Application.Notifications;
 using TaskFlow.Infrastructure.Email;
 using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
 using DomainTask = TaskFlow.Domain.Entities.Task;
 
-namespace TaskFlow.Infrastructure.Features.Tasks;
+namespace TaskFlow.Infrastructure.Persistence;
 
 internal static class TaskAssignmentNotifier
 {

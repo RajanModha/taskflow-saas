@@ -9,7 +9,6 @@ using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Tenancy;
 using TaskFlow.Domain.Common;
 using TaskFlow.Domain.Repositories;
-using TaskFlow.Infrastructure.Features.Tasks;
 using DomainTask = TaskFlow.Domain.Entities.Task;
 using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
@@ -1322,7 +1321,7 @@ public sealed class TaskRepository(
         }
 
         if (input.TagIds is { Count: > 0 } tagIdsForValidate &&
-            !await TaskFlow.Infrastructure.Features.Tasks.TaskTagging.ValidateTagIdsInOrganizationAsync(
+            !await TaskTagging.ValidateTagIdsInOrganizationAsync(
                 dbContext,
                 orgId,
                 tagIdsForValidate.ToArray(),
@@ -1366,7 +1365,7 @@ public sealed class TaskRepository(
         await dbContext.Tasks.AddAsync(task, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        await TaskFlow.Infrastructure.Features.Tasks.TaskTagging.ReplaceTaskTagsAsync(
+        await TaskTagging.ReplaceTaskTagsAsync(
             dbContext,
             task.Id,
             input.TagIds?.ToArray(),
@@ -1476,7 +1475,7 @@ public sealed class TaskRepository(
             .Where(tt => tt.TemplateId == template.Id)
             .Select(tt => tt.TagId)
             .ToArrayAsync(cancellationToken);
-        await TaskFlow.Infrastructure.Features.Tasks.TaskTagging.ReplaceTaskTagsAsync(dbContext, task.Id, templateTagIds, cancellationToken);
+        await TaskTagging.ReplaceTaskTagsAsync(dbContext, task.Id, templateTagIds, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 

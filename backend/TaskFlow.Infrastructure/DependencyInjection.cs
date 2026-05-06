@@ -17,7 +17,6 @@ using TaskFlow.Infrastructure.Tenancy;
 using TaskFlow.Infrastructure.Notifications;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Domain.Repositories;
-using TaskFlow.Infrastructure.Features.Tasks;
 using TaskFlow.Infrastructure.Persistence;
 using TaskFlow.Infrastructure.Services;
 using TaskFlow.Infrastructure.Webhooks;
@@ -63,6 +62,7 @@ public static class DependencyInjection
         services.AddScoped<INotificationReadRepository, NotificationRepository>();
         services.AddScoped<INotificationWriteRepository, NotificationRepository>();
         services.AddScoped<IDashboardReadRepository, DashboardReadRepository>();
+        services.AddScoped<ISearchReadRepository, SearchReadRepository>();
         services.AddScoped<ITaskReadModelAssembler, EfTaskReadModelAssembler>();
 
         services

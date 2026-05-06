@@ -1,8 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Domain.Entities;
-using TaskFlow.Infrastructure.Persistence;
 
-namespace TaskFlow.Infrastructure.Features.Tasks;
+namespace TaskFlow.Infrastructure.Persistence;
 
 internal static class TaskTagging
 {

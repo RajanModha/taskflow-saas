@@ -1,11 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
 using DomainTask = TaskFlow.Domain.Entities.Task;
 using DomainTaskStatus = TaskFlow.Domain.Entities.TaskStatus;
 
-namespace TaskFlow.Infrastructure.Features.Tasks;
+namespace TaskFlow.Infrastructure.Persistence;
 
 internal static class TaskProjection
 {

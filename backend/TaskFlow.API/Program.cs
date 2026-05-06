@@ -28,8 +28,8 @@ using TaskFlow.Application.Workspaces;
 using TaskFlow.Infrastructure;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Email;
-using TaskFlow.Infrastructure.Features.Tasks;
 using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Infrastructure.Services;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using System.Threading.RateLimiting;
 

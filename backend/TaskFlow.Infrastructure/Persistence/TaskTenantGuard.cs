@@ -1,9 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Application.Tenancy;
-using TaskFlow.Infrastructure.Persistence;
 using DomainTask = TaskFlow.Domain.Entities.Task;
 
-namespace TaskFlow.Infrastructure.Features.Tasks;
+namespace TaskFlow.Infrastructure.Persistence;
 
 internal static class TaskTenantGuard
 {

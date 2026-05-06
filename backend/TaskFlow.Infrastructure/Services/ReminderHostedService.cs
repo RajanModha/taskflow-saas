@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 using TaskFlow.Infrastructure.Email;
 using TaskFlow.Infrastructure.Persistence;
 
-namespace TaskFlow.Infrastructure.Features.Tasks;
+namespace TaskFlow.Infrastructure.Services;
 
 public sealed class ReminderHostedService(
     IServiceScopeFactory scopeFactory,

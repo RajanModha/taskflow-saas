@@ -1,8 +1,7 @@
 using TaskFlow.Application.Tasks;
-using TaskFlow.Infrastructure.Persistence;
 using DomainTask = TaskFlow.Domain.Entities.Task;
 
-namespace TaskFlow.Infrastructure.Features.Tasks;
+namespace TaskFlow.Infrastructure.Persistence;
 
 public sealed class EfTaskReadModelAssembler(TaskFlowDbContext dbContext) : ITaskReadModelAssembler
 {
