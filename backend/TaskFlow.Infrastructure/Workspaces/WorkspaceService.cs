@@ -7,15 +7,15 @@ using TaskFlow.Application.Notifications;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Domain.Common;
 using TaskFlow.Domain.Entities;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Workspaces;
 
 public sealed class WorkspaceService(
     UserManager<ApplicationUser> userManager,
-    TaskFlowDbContext dbContext,
+    IWorkspaceCoreRepository workspaceCoreRepository,
     IUserSessionIssuer sessionIssuer,
     TimeProvider timeProvider,
     IHttpContextAccessor httpContextAccessor,
@@ -39,17 +39,13 @@ public sealed class WorkspaceService(
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var joinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
 
-        var organization = new Organization
-        {
-            Id = Guid.NewGuid(),
-            Name = request.Name,
-            JoinCode = joinCode,
-            CreatedAtUtc = now,
-        };
+        var organizationId = await workspaceCoreRepository.CreateOrganizationAsync(
+            request.Name,
+            joinCode,
+            now,
+            cancellationToken);
 
-        await dbContext.Organizations.AddAsync(organization, cancellationToken);
-
-        user.OrganizationId = organization.Id;
+        user.OrganizationId = organizationId;
         user.WorkspaceRole = WorkspaceRole.Owner;
         user.WorkspaceJoinedAtUtc = now;
         await userManager.UpdateAsync(user);
@@ -85,9 +81,7 @@ public sealed class WorkspaceService(
         }
 
         var normalizedCode = request.Code.Trim().ToUpperInvariant();
-        var organization = await dbContext.Organizations.FirstOrDefaultAsync(
-            o => o.JoinCode == normalizedCode,
-            cancellationToken);
+        var organization = await workspaceCoreRepository.GetOrganizationByJoinCodeAsync(normalizedCode, cancellationToken);
 
         if (organization is null)
         {
@@ -103,12 +97,7 @@ public sealed class WorkspaceService(
         user.WorkspaceJoinedAtUtc = joinedAt;
         await userManager.UpdateAsync(user);
 
-        var admins = await dbContext.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(u => u.OrganizationId == organization.Id &&
-                        (u.WorkspaceRole == WorkspaceRole.Owner || u.WorkspaceRole == WorkspaceRole.Admin))
-            .ToListAsync(cancellationToken);
+        var admins = await workspaceCoreRepository.GetOrganizationAdminsAsync(organization.Id, cancellationToken);
 
         var joinedName = user.DisplayName?.Trim() is { Length: > 0 } dn
             ? dn
@@ -181,9 +170,7 @@ public sealed class WorkspaceService(
         for (var attempt = 0; attempt < 8; attempt++)
         {
             var code = WorkspaceJoinCodes.Generate();
-            var exists = await dbContext.Organizations.AnyAsync(
-                o => o.JoinCode == code,
-                cancellationToken);
+            var exists = await workspaceCoreRepository.JoinCodeExistsAsync(code, cancellationToken);
 
             if (!exists)
             {

@@ -1,55 +1,44 @@
 using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
-using TaskFlow.Application.Tenancy;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Application.Workspaces;
 using TaskFlow.Domain.Entities;
-using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
+using TaskFlow.Domain.Repositories;
 using Task = System.Threading.Tasks.Task;
 
 namespace TaskFlow.Infrastructure.Workspaces;
 
 public sealed class WorkspaceTaskTemplateService(
-    TaskFlowDbContext dbContext,
-    ICurrentTenant currentTenant,
+    IWorkspaceAccessRepository workspaceAccessRepository,
+    IWorkspaceTaskTemplateRepository workspaceTaskTemplateRepository,
     TimeProvider timeProvider) : IWorkspaceTaskTemplateService
 {
     public async Task<IReadOnlyList<TaskTemplateDto>?> ListTemplatesAsync(Guid actorUserId, CancellationToken cancellationToken = default)
     {
-        var actor = await LoadMemberInTenantAsync(actorUserId, cancellationToken);
+        var actor = await workspaceAccessRepository.GetActorInCurrentTenantAsync(actorUserId, cancellationToken);
         if (actor is null)
         {
             return null;
         }
 
-        var templates = await dbContext.TaskTemplates
-            .AsNoTracking()
-            .Where(t => t.OrganizationId == actor.OrganizationId)
-            .OrderBy(t => t.Name)
-            .ToListAsync(cancellationToken);
-
-        return await MapTemplatesAsync(templates, cancellationToken);
+        var templates = await workspaceTaskTemplateRepository.ListTemplatesAsync(actor.OrganizationId, cancellationToken);
+        return templates.Select(ToDto).ToList();
     }
 
     public async Task<TaskTemplateDto?> GetTemplateAsync(Guid actorUserId, Guid templateId, CancellationToken cancellationToken = default)
     {
-        var actor = await LoadMemberInTenantAsync(actorUserId, cancellationToken);
+        var actor = await workspaceAccessRepository.GetActorInCurrentTenantAsync(actorUserId, cancellationToken);
         if (actor is null)
         {
             return null;
         }
 
-        var template = await dbContext.TaskTemplates
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == templateId && t.OrganizationId == actor.OrganizationId, cancellationToken);
+        var template = await workspaceTaskTemplateRepository.GetTemplateAsync(actor.OrganizationId, templateId, cancellationToken);
         if (template is null)
         {
             return null;
         }
 
-        var mapped = await MapTemplatesAsync([template], cancellationToken);
-        return mapped[0];
+        return ToDto(template);
     }
 
     public async Task<(int StatusCode, object? Body)> CreateTemplateAsync(
@@ -57,8 +46,8 @@ public sealed class WorkspaceTaskTemplateService(
         CreateTaskTemplateRequest request,
         CancellationToken cancellationToken = default)
     {
-        var actor = await LoadAdminActorAsync(actorUserId, cancellationToken);
-        if (actor is null)
+        var actor = await workspaceAccessRepository.GetActorInCurrentTenantAsync(actorUserId, cancellationToken);
+        if (actor is null || (actor.WorkspaceRole != WorkspaceRole.Owner && actor.WorkspaceRole != WorkspaceRole.Admin))
         {
             return (StatusCodes.Status404NotFound, new { message = "Workspace not found." });
         }
@@ -79,34 +68,22 @@ public sealed class WorkspaceTaskTemplateService(
             return validation.Value;
         }
 
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        var template = new TaskTemplate
-        {
-            Id = Guid.NewGuid(),
-            OrganizationId = actor.OrganizationId,
-            Name = request.Name.Trim(),
-            Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
-            DefaultTitle = request.DefaultTitle.Trim(),
-            DefaultDescription = string.IsNullOrWhiteSpace(request.DefaultDescription) ? null : request.DefaultDescription.Trim(),
-            DefaultPriority = request.DefaultPriority,
-            DefaultDueDaysFromNow = request.DefaultDueDaysFromNow,
-            CreatedByUserId = actorUserId,
-            CreatedAtUtc = now,
-            UpdatedAtUtc = now,
-        };
-
-        await using var createTransaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await dbContext.TaskTemplates.AddAsync(template, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await ReplaceTemplateChecklistAsync(template.Id, request.ChecklistItems, cancellationToken);
-        await ReplaceTemplateTagsAsync(template.Id, request.TagIds, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await createTransaction.CommitAsync(cancellationToken);
-
-        var mapped = await MapTemplatesAsync([template], cancellationToken);
-        return (StatusCodes.Status201Created, mapped[0]);
+        var createdId = await workspaceTaskTemplateRepository.CreateTemplateAsync(
+            actor.OrganizationId,
+            actorUserId,
+            timeProvider.GetUtcNow().UtcDateTime,
+            new WorkspaceTaskTemplateMutationInput(
+                request.Name.Trim(),
+                string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+                request.DefaultTitle.Trim(),
+                string.IsNullOrWhiteSpace(request.DefaultDescription) ? null : request.DefaultDescription.Trim(),
+                request.DefaultPriority,
+                request.DefaultDueDaysFromNow,
+                request.ChecklistItems,
+                request.TagIds),
+            cancellationToken);
+        var created = await workspaceTaskTemplateRepository.GetTemplateAsync(actor.OrganizationId, createdId, cancellationToken);
+        return (StatusCodes.Status201Created, created is null ? null : ToDto(created));
     }
 
     public async Task<(int StatusCode, object? Body)> UpdateTemplateAsync(
@@ -115,15 +92,14 @@ public sealed class WorkspaceTaskTemplateService(
         UpdateTaskTemplateRequest request,
         CancellationToken cancellationToken = default)
     {
-        var actor = await LoadAdminActorAsync(actorUserId, cancellationToken);
-        if (actor is null)
+        var actor = await workspaceAccessRepository.GetActorInCurrentTenantAsync(actorUserId, cancellationToken);
+        if (actor is null || (actor.WorkspaceRole != WorkspaceRole.Owner && actor.WorkspaceRole != WorkspaceRole.Admin))
         {
             return (StatusCodes.Status404NotFound, new { message = "Workspace not found." });
         }
 
-        var template = await dbContext.TaskTemplates
-            .FirstOrDefaultAsync(t => t.Id == templateId && t.OrganizationId == actor.OrganizationId, cancellationToken);
-        if (template is null)
+        var existing = await workspaceTaskTemplateRepository.GetTemplateAsync(actor.OrganizationId, templateId, cancellationToken);
+        if (existing is null)
         {
             return (StatusCodes.Status404NotFound, new { message = "Template not found." });
         }
@@ -144,37 +120,39 @@ public sealed class WorkspaceTaskTemplateService(
             return validation.Value;
         }
 
-        template.Name = request.Name.Trim();
-        template.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
-        template.DefaultTitle = request.DefaultTitle.Trim();
-        template.DefaultDescription = string.IsNullOrWhiteSpace(request.DefaultDescription) ? null : request.DefaultDescription.Trim();
-        template.DefaultPriority = request.DefaultPriority;
-        template.DefaultDueDaysFromNow = request.DefaultDueDaysFromNow;
-        template.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var updated = await workspaceTaskTemplateRepository.UpdateTemplateAsync(
+            actor.OrganizationId,
+            templateId,
+            timeProvider.GetUtcNow().UtcDateTime,
+            new WorkspaceTaskTemplateMutationInput(
+                request.Name.Trim(),
+                string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+                request.DefaultTitle.Trim(),
+                string.IsNullOrWhiteSpace(request.DefaultDescription) ? null : request.DefaultDescription.Trim(),
+                request.DefaultPriority,
+                request.DefaultDueDaysFromNow,
+                request.ChecklistItems,
+                request.TagIds),
+            cancellationToken);
+        if (!updated)
+        {
+            return (StatusCodes.Status404NotFound, new { message = "Template not found." });
+        }
 
-        await using var updateTransaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await ReplaceTemplateChecklistAsync(template.Id, request.ChecklistItems, cancellationToken);
-        await ReplaceTemplateTagsAsync(template.Id, request.TagIds, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await updateTransaction.CommitAsync(cancellationToken);
-
-        var mapped = await MapTemplatesAsync([template], cancellationToken);
-        return (StatusCodes.Status200OK, mapped[0]);
+        var reloaded = await workspaceTaskTemplateRepository.GetTemplateAsync(actor.OrganizationId, templateId, cancellationToken);
+        return (StatusCodes.Status200OK, reloaded is null ? null : ToDto(reloaded));
     }
 
     public async Task<int> DeleteTemplateAsync(Guid actorUserId, Guid templateId, CancellationToken cancellationToken = default)
     {
-        var actor = await LoadAdminActorAsync(actorUserId, cancellationToken);
-        if (actor is null)
+        var actor = await workspaceAccessRepository.GetActorInCurrentTenantAsync(actorUserId, cancellationToken);
+        if (actor is null || (actor.WorkspaceRole != WorkspaceRole.Owner && actor.WorkspaceRole != WorkspaceRole.Admin))
         {
             return StatusCodes.Status404NotFound;
         }
 
-        var deleted = await dbContext.TaskTemplates
-            .Where(t => t.Id == templateId && t.OrganizationId == actor.OrganizationId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        return deleted > 0 ? StatusCodes.Status204NoContent : StatusCodes.Status404NotFound;
+        var deleted = await workspaceTaskTemplateRepository.DeleteTemplateAsync(actor.OrganizationId, templateId, cancellationToken);
+        return deleted ? StatusCodes.Status204NoContent : StatusCodes.Status404NotFound;
     }
 
     private async Task<(int StatusCode, object? Body)?> ValidateCreateOrUpdateAsync(
@@ -216,12 +194,11 @@ public sealed class WorkspaceTaskTemplateService(
             return (StatusCodes.Status400BadRequest, new { message = "Default due days from now must be between 0 and 3650." });
         }
 
-        var nameTaken = await dbContext.TaskTemplates
-            .AnyAsync(
-                t => t.OrganizationId == organizationId &&
-                     t.Name == trimmedName &&
-                     (!editingTemplateId.HasValue || t.Id != editingTemplateId.Value),
-                cancellationToken);
+        var nameTaken = await workspaceTaskTemplateRepository.TemplateNameExistsAsync(
+            organizationId,
+            trimmedName,
+            editingTemplateId,
+            cancellationToken);
         if (nameTaken)
         {
             return (StatusCodes.Status409Conflict, new { message = "A template with this name already exists in the workspace." });
@@ -250,9 +227,10 @@ public sealed class WorkspaceTaskTemplateService(
 
         if (uniqueTagIds.Length > 0)
         {
-            var validCount = await dbContext.Tags
-                .AsNoTracking()
-                .CountAsync(t => t.OrganizationId == organizationId && uniqueTagIds.Contains(t.Id), cancellationToken);
+            var validCount = await workspaceTaskTemplateRepository.CountValidTagsAsync(
+                organizationId,
+                uniqueTagIds,
+                cancellationToken);
             if (validCount != uniqueTagIds.Length)
             {
                 return (StatusCodes.Status400BadRequest, new { message = "One or more tag ids are invalid for this workspace." });
@@ -262,155 +240,17 @@ public sealed class WorkspaceTaskTemplateService(
         return null;
     }
 
-    private async Task ReplaceTemplateChecklistAsync(Guid templateId, IReadOnlyList<string> checklistItems, CancellationToken cancellationToken)
-    {
-        await dbContext.TaskTemplateChecklistItems
-            .Where(i => i.TemplateId == templateId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        var items = checklistItems
-            .Select((title, index) => new TaskTemplateChecklistItem
-            {
-                Id = Guid.NewGuid(),
-                TemplateId = templateId,
-                Title = title.Trim(),
-                Order = index + 1,
-            })
-            .ToList();
-
-        if (items.Count > 0)
-        {
-            await dbContext.TaskTemplateChecklistItems.AddRangeAsync(items, cancellationToken);
-        }
-    }
-
-    private async Task ReplaceTemplateTagsAsync(Guid templateId, IReadOnlyList<Guid> tagIds, CancellationToken cancellationToken)
-    {
-        await dbContext.TaskTemplateTags
-            .Where(tt => tt.TemplateId == templateId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        var tags = tagIds
-            .Distinct()
-            .Select(tagId => new TaskTemplateTag { TemplateId = templateId, TagId = tagId })
-            .ToList();
-
-        if (tags.Count > 0)
-        {
-            await dbContext.TaskTemplateTags.AddRangeAsync(tags, cancellationToken);
-        }
-    }
-
-    private async Task<IReadOnlyList<TaskTemplateDto>> MapTemplatesAsync(
-        IReadOnlyList<TaskTemplate> templates,
-        CancellationToken cancellationToken)
-    {
-        if (templates.Count == 0)
-        {
-            return [];
-        }
-
-        var templateIds = templates.Select(t => t.Id).ToArray();
-        var creatorIds = templates.Select(t => t.CreatedByUserId).Distinct().ToArray();
-
-        var creators = await dbContext.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(u => creatorIds.Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, cancellationToken);
-
-        var checklistRows = await dbContext.TaskTemplateChecklistItems
-            .AsNoTracking()
-            .Where(i => templateIds.Contains(i.TemplateId))
-            .OrderBy(i => i.Order)
-            .ToListAsync(cancellationToken);
-
-        var tagRows = await dbContext.TaskTemplateTags
-            .AsNoTracking()
-            .Where(tt => templateIds.Contains(tt.TemplateId))
-            .Join(
-                dbContext.Tags.AsNoTracking(),
-                tt => tt.TagId,
-                tag => tag.Id,
-                (tt, tag) => new { tt.TemplateId, Tag = tag })
-            .ToListAsync(cancellationToken);
-
-        var checklistByTemplate = checklistRows
-            .GroupBy(x => x.TemplateId)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<TaskTemplateChecklistItemDto>)g
-                    .OrderBy(i => i.Order)
-                    .Select(i => new TaskTemplateChecklistItemDto(i.Id, i.Title, i.Order))
-                    .ToList());
-
-        var tagsByTemplate = tagRows
-            .GroupBy(x => x.TemplateId)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<TagDto>)g
-                    .Select(x => new TagDto(x.Tag.Id, x.Tag.Name, x.Tag.Color))
-                    .OrderBy(t => t.Name)
-                    .ToList());
-
-        return templates.Select(t =>
-            {
-                creators.TryGetValue(t.CreatedByUserId, out var creator);
-                var createdBy = new TaskTemplateCreatedByDto(
-                    t.CreatedByUserId,
-                    creator?.UserName ?? string.Empty);
-                checklistByTemplate.TryGetValue(t.Id, out var checklist);
-                tagsByTemplate.TryGetValue(t.Id, out var tags);
-                return new TaskTemplateDto(
-                    t.Id,
-                    t.Name,
-                    t.Description,
-                    t.DefaultTitle,
-                    t.DefaultDescription,
-                    t.DefaultPriority,
-                    t.DefaultDueDaysFromNow,
-                    checklist ?? [],
-                    tags ?? [],
-                    createdBy,
-                    t.CreatedAtUtc);
-            })
-            .ToList();
-    }
-
-    private async Task<ApplicationUser?> LoadMemberInTenantAsync(Guid userId, CancellationToken cancellationToken)
-    {
-        if (!currentTenant.IsSet)
-        {
-            return null;
-        }
-
-        return await dbContext.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId && u.OrganizationId == currentTenant.OrganizationId, cancellationToken);
-    }
-
-    private async Task<ApplicationUser?> LoadAdminActorAsync(Guid userId, CancellationToken cancellationToken)
-    {
-        var user = await dbContext.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
-        if (user is null || user.OrganizationId == Guid.Empty)
-        {
-            return null;
-        }
-
-        if (!currentTenant.IsSet || user.OrganizationId != currentTenant.OrganizationId)
-        {
-            return null;
-        }
-
-        if (user.WorkspaceRole != WorkspaceRole.Owner && user.WorkspaceRole != WorkspaceRole.Admin)
-        {
-            return null;
-        }
-
-        return user;
-    }
+    private static TaskTemplateDto ToDto(WorkspaceTaskTemplateReadModel t) =>
+        new(
+            t.Id,
+            t.Name,
+            t.Description,
+            t.DefaultTitle,
+            t.DefaultDescription,
+            t.DefaultPriority,
+            t.DefaultDueDaysFromNow,
+            t.ChecklistItems.Select(i => new TaskTemplateChecklistItemDto(i.Id, i.Title, i.Order)).ToList(),
+            t.Tags.Select(tag => new TagDto(tag.Id, tag.Name, tag.Color)).ToList(),
+            new TaskTemplateCreatedByDto(t.CreatedByUserId, t.CreatedByUserName),
+            t.CreatedAtUtc);
 }

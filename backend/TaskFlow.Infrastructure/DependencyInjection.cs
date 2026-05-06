@@ -63,6 +63,10 @@ public static class DependencyInjection
         services.AddScoped<INotificationWriteRepository, NotificationRepository>();
         services.AddScoped<IDashboardReadRepository, DashboardReadRepository>();
         services.AddScoped<ISearchReadRepository, SearchReadRepository>();
+        services.AddScoped<IWorkspaceAccessRepository, WorkspaceAccessRepository>();
+        services.AddScoped<IWorkspaceTagRepository, WorkspaceTagRepository>();
+        services.AddScoped<IWorkspaceCoreRepository, WorkspaceCoreRepository>();
+        services.AddScoped<IWorkspaceTaskTemplateRepository, WorkspaceTaskTemplateRepository>();
         services.AddScoped<ITaskReadModelAssembler, EfTaskReadModelAssembler>();
 
         services
