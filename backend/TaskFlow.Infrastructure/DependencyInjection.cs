@@ -67,6 +67,7 @@ public static class DependencyInjection
         services.AddScoped<IWorkspaceTagRepository, WorkspaceTagRepository>();
         services.AddScoped<IWorkspaceCoreRepository, WorkspaceCoreRepository>();
         services.AddScoped<IWorkspaceTaskTemplateRepository, WorkspaceTaskTemplateRepository>();
+        services.AddScoped<IWorkspaceManagementRepository, WorkspaceManagementRepository>();
         services.AddScoped<ITaskReadModelAssembler, EfTaskReadModelAssembler>();
 
         services

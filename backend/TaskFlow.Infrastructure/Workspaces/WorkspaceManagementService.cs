@@ -1,20 +1,16 @@
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Workspaces;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Domain.Entities;
 using TaskFlow.Infrastructure.Auth;
 using TaskFlow.Infrastructure.Email;
-using TaskFlow.Infrastructure.Identity;
-using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Workspaces;
 
 public sealed class WorkspaceManagementService(
-    UserManager<ApplicationUser> userManager,
-    TaskFlowDbContext dbContext,
+    IWorkspaceManagementRepository workspaceManagementRepository,
     IEmailService emailService,
     IOptions<EmailSettings> emailSettings,
     TimeProvider timeProvider,
@@ -24,26 +20,19 @@ public sealed class WorkspaceManagementService(
 
     public async Task<MyWorkspaceResponse?> GetMyWorkspaceAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var user = await dbContext.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        var user = await workspaceManagementRepository.GetUserByIdAsync(userId, cancellationToken);
         if (user is null || user.OrganizationId == Guid.Empty)
         {
             return null;
         }
 
-        var org = await dbContext.Organizations
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == user.OrganizationId, cancellationToken);
+        var org = await workspaceManagementRepository.GetOrganizationByIdAsync(user.OrganizationId, cancellationToken);
         if (org is null)
         {
             return null;
         }
 
-        var memberCount = await dbContext.Users
-            .IgnoreQueryFilters()
-            .CountAsync(u => u.OrganizationId == user.OrganizationId, cancellationToken);
+        var memberCount = await workspaceManagementRepository.CountOrganizationMembersAsync(user.OrganizationId, cancellationToken);
 
         return new MyWorkspaceResponse(
             org.Id,
@@ -71,39 +60,22 @@ public sealed class WorkspaceManagementService(
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
-        var query = dbContext.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(u => u.OrganizationId == orgId.Value);
-
-        if (roleFilter is not null)
-        {
-            query = query.Where(u => u.WorkspaceRole == roleFilter);
-        }
-
-        if (!string.IsNullOrWhiteSpace(q))
-        {
-            var term = q.Trim();
-            var normalized = term.ToUpperInvariant();
-            query = query.Where(u =>
-                (u.NormalizedUserName != null && u.NormalizedUserName.Contains(normalized)) ||
-                (u.NormalizedEmail != null && u.NormalizedEmail.Contains(normalized)) ||
-                (u.DisplayName != null && EF.Functions.ILike(u.DisplayName, $"%{term}%")));
-        }
-
-        var total = await query.CountAsync(cancellationToken);
-        var items = await query
-            .OrderBy(u => u.UserName)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+        var (rows, total) = await workspaceManagementRepository.GetMembersPageAsync(
+            orgId.Value,
+            page,
+            pageSize,
+            q,
+            roleFilter,
+            cancellationToken);
+        var items = rows
             .Select(u => new WorkspaceMemberRowDto(
                 u.Id,
-                u.UserName ?? string.Empty,
+                u.UserName,
                 u.DisplayName,
-                u.Email ?? string.Empty,
+                u.Email,
                 u.WorkspaceRole.ToString(),
                 new DateTimeOffset(u.WorkspaceJoinedAtUtc, TimeSpan.Zero)))
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         return new WorkspaceMembersPageResponse(items, page, pageSize, total);
     }
@@ -130,24 +102,20 @@ public sealed class WorkspaceManagementService(
             return (StatusCodes.Status400BadRequest, new { message = "Email is required." });
         }
 
-        var alreadyMember = await dbContext.Users
-            .IgnoreQueryFilters()
-            .AnyAsync(
-                u => u.OrganizationId == actor.OrganizationId && u.NormalizedEmail == normalizedEmail,
-                cancellationToken);
+        var alreadyMember = await workspaceManagementRepository.OrganizationHasMemberWithNormalizedEmailAsync(
+            actor.OrganizationId,
+            normalizedEmail,
+            cancellationToken);
         if (alreadyMember)
         {
             return (StatusCodes.Status409Conflict, new { message = "This user is already a member of the workspace." });
         }
 
-        var pendingDuplicate = await dbContext.PendingInvites
-            .IgnoreQueryFilters()
-            .AnyAsync(
-                i => i.OrganizationId == actor.OrganizationId &&
-                     i.NormalizedEmail == normalizedEmail &&
-                     i.AcceptedAtUtc == null &&
-                     i.ExpiresAtUtc > timeProvider.GetUtcNow().UtcDateTime,
-                cancellationToken);
+        var pendingDuplicate = await workspaceManagementRepository.HasActivePendingInviteAsync(
+            actor.OrganizationId,
+            normalizedEmail,
+            timeProvider.GetUtcNow().UtcDateTime,
+            cancellationToken);
         if (pendingDuplicate)
         {
             return (StatusCodes.Status409Conflict, new { message = "An active invite already exists for this email." });
@@ -155,41 +123,32 @@ public sealed class WorkspaceManagementService(
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var (raw, hash) = RefreshTokenCrypto.GenerateToken();
-        var org = await dbContext.Organizations.AsNoTracking()
-            .FirstAsync(o => o.Id == actor.OrganizationId, cancellationToken);
-        var inviterName = actor.DisplayName?.Trim() is { Length: > 0 } dn ? dn : actor.UserName ?? actor.Email ?? "Someone";
-
-        var entity = new PendingInvite
+        var org = await workspaceManagementRepository.GetOrganizationByIdAsync(actor.OrganizationId, cancellationToken);
+        if (org is null)
         {
-            Id = Guid.NewGuid(),
-            OrganizationId = actor.OrganizationId,
-            Email = request.Email.Trim(),
-            NormalizedEmail = normalizedEmail,
-            Role = inviteRole,
-            TokenHash = hash,
-            ExpiresAtUtc = now.AddDays(7),
-            SentAtUtc = now,
-            ResendCount = 0,
-            LastResentAtUtc = null,
-            AcceptedAtUtc = null,
-        };
-
-        await dbContext.PendingInvites
-            .IgnoreQueryFilters()
-            .Where(
-                e => e.OrganizationId == actor.OrganizationId &&
-                     e.NormalizedEmail == normalizedEmail &&
-                     e.AcceptedAtUtc == null &&
-                     e.ExpiresAtUtc <= now)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        dbContext.PendingInvites.Add(entity);
-        await dbContext.SaveChangesAsync(cancellationToken);
+            return (StatusCodes.Status404NotFound, new { message = "Workspace not found." });
+        }
+        var inviterName = actor.DisplayName?.Trim() is { Length: > 0 } dn ? dn : actor.UserName ?? actor.Email ?? "Someone";
+        await workspaceManagementRepository.DeleteExpiredInvitesAsync(actor.OrganizationId, normalizedEmail, now, cancellationToken);
+        var inviteEmail = request.Email.Trim();
+        await workspaceManagementRepository.CreatePendingInviteAsync(
+            new WorkspacePendingInviteMutationInput(
+                actor.OrganizationId,
+                inviteEmail,
+                normalizedEmail,
+                inviteRole,
+                hash,
+                now.AddDays(7),
+                now,
+                0,
+                null,
+                null),
+            cancellationToken);
 
         var joinUrl = BuildJoinInviteUrl(raw);
         await emailService.SendEmailAsync(
-            entity.Email,
-            entity.Email,
+            inviteEmail,
+            inviteEmail,
             $"You're invited to {org.Name} on TaskFlow",
             EmailTemplates.WorkspaceInvite(inviterName, org.Name, joinUrl, WorkspaceRoleStrings.ToApiString(inviteRole)),
             "WorkspaceInvite",
@@ -212,13 +171,10 @@ public sealed class WorkspaceManagementService(
         var normalizedEmail = NormalizeEmail(request.Email);
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
-        var invite = await dbContext.PendingInvites
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(
-                i => i.OrganizationId == actor.OrganizationId &&
-                     i.NormalizedEmail == normalizedEmail &&
-                     i.AcceptedAtUtc == null,
-                cancellationToken);
+        var invite = await workspaceManagementRepository.GetPendingInviteByEmailAsync(
+            actor.OrganizationId,
+            normalizedEmail,
+            cancellationToken);
 
         if (invite is null)
         {
@@ -242,16 +198,18 @@ public sealed class WorkspaceManagementService(
         }
 
         var (raw, hash) = RefreshTokenCrypto.GenerateToken();
-        invite.TokenHash = hash;
-        invite.ResendCount++;
-        invite.LastResentAtUtc = now;
-        invite.ExpiresAtUtc = now.AddDays(7);
-
-        var org = await dbContext.Organizations.AsNoTracking()
-            .FirstAsync(o => o.Id == actor.OrganizationId, cancellationToken);
+        var org = await workspaceManagementRepository.GetOrganizationByIdAsync(actor.OrganizationId, cancellationToken);
+        if (org is null)
+        {
+            return (StatusCodes.Status404NotFound, new { message = "Workspace not found." });
+        }
         var inviterName = actor.DisplayName?.Trim() is { Length: > 0 } dn ? dn : actor.UserName ?? actor.Email ?? "Someone";
-
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await workspaceManagementRepository.UpdatePendingInviteForResendAsync(
+            invite.Id,
+            hash,
+            now,
+            now.AddDays(7),
+            cancellationToken);
 
         var joinUrl = BuildJoinInviteUrl(raw);
         await emailService.SendEmailAsync(
@@ -280,13 +238,7 @@ public sealed class WorkspaceManagementService(
         }
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var list = await dbContext.PendingInvites
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(i => i.OrganizationId == orgId)
-            .OrderByDescending(i => i.SentAtUtc)
-            .Select(i => new { i.Id, i.Email, i.Role, i.SentAtUtc, i.ExpiresAtUtc, i.ResendCount, i.AcceptedAtUtc })
-            .ToListAsync(cancellationToken);
+        var list = await workspaceManagementRepository.ListInvitesAsync(orgId.Value, cancellationToken);
 
         return list
             .Select(i =>
@@ -325,12 +277,8 @@ public sealed class WorkspaceManagementService(
             return StatusCodes.Status404NotFound;
         }
 
-        var deleted = await dbContext.PendingInvites
-            .IgnoreQueryFilters()
-            .Where(i => i.Id == inviteId && i.OrganizationId == orgId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        return deleted > 0 ? StatusCodes.Status204NoContent : StatusCodes.Status404NotFound;
+        var deleted = await workspaceManagementRepository.CancelInviteAsync(orgId.Value, inviteId, cancellationToken);
+        return deleted ? StatusCodes.Status204NoContent : StatusCodes.Status404NotFound;
     }
 
     public async Task<(int StatusCode, object Body)> AcceptInviteAsync(
@@ -341,9 +289,7 @@ public sealed class WorkspaceManagementService(
         var hash = RefreshTokenCrypto.HashRaw(request.Token.Trim());
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
-        var invite = await dbContext.PendingInvites
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(i => i.TokenHash == hash, cancellationToken);
+        var invite = await workspaceManagementRepository.GetPendingInviteByTokenHashAsync(hash, cancellationToken);
 
         if (invite is null)
         {
@@ -360,19 +306,16 @@ public sealed class WorkspaceManagementService(
             return (StatusCodes.Status400BadRequest, new { message = "This invite has expired." });
         }
 
-        var org = await dbContext.Organizations.AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == invite.OrganizationId, cancellationToken);
+        var org = await workspaceManagementRepository.GetOrganizationByIdAsync(invite.OrganizationId, cancellationToken);
         if (org is null)
         {
             return (StatusCodes.Status400BadRequest, new { message = "Workspace no longer exists." });
         }
 
-        ApplicationUser? targetUser = null;
+        WorkspaceUserReadModel? targetUser = null;
         if (authenticatedUserId is { } authId)
         {
-            targetUser = await dbContext.Users
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(u => u.Id == authId, cancellationToken);
+            targetUser = await workspaceManagementRepository.GetUserByIdAsync(authId, cancellationToken);
             if (targetUser is null ||
                 !string.Equals(targetUser.NormalizedEmail, invite.NormalizedEmail, StringComparison.Ordinal))
             {
@@ -381,9 +324,7 @@ public sealed class WorkspaceManagementService(
         }
         else
         {
-            targetUser = await dbContext.Users
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(u => u.NormalizedEmail == invite.NormalizedEmail, cancellationToken);
+            targetUser = await workspaceManagementRepository.GetUserByNormalizedEmailAsync(invite.NormalizedEmail, cancellationToken);
         }
 
         if (targetUser is null)
@@ -398,17 +339,18 @@ public sealed class WorkspaceManagementService(
             return (StatusCodes.Status409Conflict, new { message = "You are already a member of this workspace." });
         }
 
-        targetUser.OrganizationId = invite.OrganizationId;
-        targetUser.WorkspaceRole = invite.Role;
-        targetUser.WorkspaceJoinedAtUtc = now;
-        var update = await userManager.UpdateAsync(targetUser);
-        if (!update.Succeeded)
+        var update = await workspaceManagementRepository.UpdateUserWorkspaceAsync(
+            targetUser.Id,
+            invite.OrganizationId,
+            invite.Role,
+            now,
+            cancellationToken);
+        if (!update)
         {
             return (StatusCodes.Status400BadRequest, new { message = "Unable to accept invite for this account." });
         }
 
-        invite.AcceptedAtUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await workspaceManagementRepository.MarkInviteAcceptedAsync(invite.Id, now, cancellationToken);
 
         await webhookDispatcher.DispatchOrganizationEventAsync(
             invite.OrganizationId,
@@ -451,11 +393,11 @@ public sealed class WorkspaceManagementService(
             return (StatusCodes.Status400BadRequest, "Role must be Admin or Member.");
         }
 
-        var member = await dbContext.Users
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(
-                u => u.Id == memberId && u.OrganizationId == actor.OrganizationId,
-                cancellationToken);
+        var member = await workspaceManagementRepository.GetUserByIdAsync(memberId, cancellationToken);
+        if (member is not null && member.OrganizationId != actor.OrganizationId)
+        {
+            member = null;
+        }
         if (member is null)
         {
             return (StatusCodes.Status404NotFound, "Member not found.");
@@ -466,8 +408,7 @@ public sealed class WorkspaceManagementService(
             return (StatusCodes.Status400BadRequest, "The workspace owner role cannot be changed here.");
         }
 
-        member.WorkspaceRole = newRole;
-        await userManager.UpdateAsync(member);
+        await workspaceManagementRepository.UpdateUserRoleAsync(member.Id, actor.OrganizationId, newRole, cancellationToken);
 
         return (StatusCodes.Status200OK, null);
     }
@@ -480,11 +421,11 @@ public sealed class WorkspaceManagementService(
             return StatusCodes.Status404NotFound;
         }
 
-        var member = await dbContext.Users
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(
-                u => u.Id == memberId && u.OrganizationId == actor.OrganizationId,
-                cancellationToken);
+        var member = await workspaceManagementRepository.GetUserByIdAsync(memberId, cancellationToken);
+        if (member is not null && member.OrganizationId != actor.OrganizationId)
+        {
+            member = null;
+        }
         if (member is null)
         {
             return StatusCodes.Status404NotFound;
@@ -498,11 +439,7 @@ public sealed class WorkspaceManagementService(
         if (memberId == actorUserId &&
             member.WorkspaceRole == WorkspaceRole.Owner)
         {
-            var ownerCount = await dbContext.Users
-                .IgnoreQueryFilters()
-                .CountAsync(
-                    u => u.OrganizationId == actor.OrganizationId && u.WorkspaceRole == WorkspaceRole.Owner,
-                    cancellationToken);
+            var ownerCount = await workspaceManagementRepository.CountOwnersAsync(actor.OrganizationId, cancellationToken);
             if (ownerCount <= 1)
             {
                 return StatusCodes.Status400BadRequest;
@@ -510,15 +447,11 @@ public sealed class WorkspaceManagementService(
         }
 
         var orgId = member.OrganizationId;
-        await dbContext.Tasks
-            .IgnoreQueryFilters()
-            .Where(t => t.OrganizationId == orgId && t.AssigneeId == memberId)
-            .ExecuteUpdateAsync(s => s.SetProperty(t => t.AssigneeId, (Guid?)null), cancellationToken);
-
-        member.OrganizationId = Guid.Empty;
-        member.WorkspaceRole = WorkspaceRole.Member;
-        member.WorkspaceJoinedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-        await userManager.UpdateAsync(member);
+        await workspaceManagementRepository.UnassignTasksForMemberAsync(orgId, memberId, cancellationToken);
+        await workspaceManagementRepository.RemoveUserFromWorkspaceAsync(
+            member.Id,
+            timeProvider.GetUtcNow().UtcDateTime,
+            cancellationToken);
 
         return StatusCodes.Status204NoContent;
     }
@@ -538,17 +471,15 @@ public sealed class WorkspaceManagementService(
             return (StatusCodes.Status403Forbidden, null, "Only the workspace owner can regenerate the join code.");
         }
 
-        var org = await dbContext.Organizations
-            .FirstOrDefaultAsync(o => o.Id == actor.OrganizationId, cancellationToken);
+        var org = await workspaceManagementRepository.GetOrganizationByIdAsync(actor.OrganizationId, cancellationToken);
         if (org is null)
         {
             return (StatusCodes.Status404NotFound, null, "Workspace not found.");
         }
 
-        org.JoinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return (StatusCodes.Status200OK, new RegenerateJoinCodeResponse(org.JoinCode), null);
+        var joinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
+        await workspaceManagementRepository.UpdateOrganizationJoinCodeAsync(actor.OrganizationId, joinCode, cancellationToken);
+        return (StatusCodes.Status200OK, new RegenerateJoinCodeResponse(joinCode), null);
     }
 
     public async Task<(int StatusCode, object? Body, string? Error)> UpdateWorkspaceNameAsync(
@@ -573,24 +504,20 @@ public sealed class WorkspaceManagementService(
             return (StatusCodes.Status400BadRequest, null, "Name must be between 1 and 128 characters.");
         }
 
-        var org = await dbContext.Organizations
-            .FirstOrDefaultAsync(o => o.Id == actor.OrganizationId, cancellationToken);
+        var org = await workspaceManagementRepository.GetOrganizationByIdAsync(actor.OrganizationId, cancellationToken);
         if (org is null)
         {
             return (StatusCodes.Status404NotFound, null, "Workspace not found.");
         }
 
-        org.Name = name;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await workspaceManagementRepository.UpdateOrganizationNameAsync(actor.OrganizationId, name, cancellationToken);
 
         return (StatusCodes.Status200OK, new UpdateWorkspaceResponse("Workspace updated."), null);
     }
 
-    private async Task<ApplicationUser?> LoadActorInTenantAsync(Guid userId, CancellationToken cancellationToken)
+    private async Task<WorkspaceUserReadModel?> LoadActorInTenantAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var user = await dbContext.Users
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        var user = await workspaceManagementRepository.GetUserByIdAsync(userId, cancellationToken);
         if (user is null || user.OrganizationId == Guid.Empty)
         {
             return null;
@@ -623,7 +550,7 @@ public sealed class WorkspaceManagementService(
         for (var attempt = 0; attempt < 12; attempt++)
         {
             var code = WorkspaceJoinCodes.Generate();
-            var exists = await dbContext.Organizations.AnyAsync(o => o.JoinCode == code, cancellationToken);
+            var exists = await workspaceManagementRepository.JoinCodeExistsAsync(code, cancellationToken);
             if (!exists)
             {
                 return code;

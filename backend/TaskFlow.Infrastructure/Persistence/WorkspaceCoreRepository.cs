@@ -33,7 +33,7 @@ public sealed class WorkspaceCoreRepository(TaskFlowDbContext dbContext) : IWork
         CancellationToken cancellationToken) =>
         await dbContext.Organizations.AsNoTracking()
             .Where(o => o.JoinCode == joinCode)
-            .Select(o => new WorkspaceOrganizationReadModel(o.Id, o.Name, o.JoinCode))
+            .Select(o => new WorkspaceOrganizationReadModel(o.Id, o.Name, o.JoinCode, o.CreatedAtUtc))
             .FirstOrDefaultAsync(cancellationToken);
 
     public async Task<IReadOnlyList<WorkspaceAdminReadModel>> GetOrganizationAdminsAsync(
