@@ -3,7 +3,7 @@ using TaskFlow.Application.Auth;
 
 namespace TaskFlow.Application.Validation;
 
-/// <summary>Structural validation only; password policy is enforced by ASP.NET Core Identity in AuthService.</summary>
+/// <summary>Structural validation only; password policy is enforced by ASP.NET Core Identity in auth handlers.</summary>
 public sealed class ResetPasswordRequestValidator : AbstractValidator<ResetPasswordRequest>
 {
     public ResetPasswordRequestValidator()

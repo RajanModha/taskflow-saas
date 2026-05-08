@@ -87,7 +87,6 @@ public static class DependencyInjection
 
         services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
         services.AddScoped<IUserSessionIssuer, UserSessionIssuer>();
-        services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IWorkspaceService, WorkspaceService>();
         services.AddScoped<IWorkspaceManagementService, WorkspaceManagementService>();
         services.AddScoped<IWorkspaceTagService, WorkspaceTagService>();

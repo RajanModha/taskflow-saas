@@ -1,6 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
+using MediatR;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -15,26 +16,19 @@ using TaskFlow.Infrastructure.Persistence;
 
 namespace TaskFlow.Infrastructure.Auth;
 
-public sealed class AuthService(
+public sealed class RegisterCommandHandler(
     UserManager<ApplicationUser> userManager,
     TaskFlowDbContext dbContext,
     TimeProvider timeProvider,
     IEmailService emailService,
-    IOptions<EmailSettings> emailSettings,
-    IOptions<JwtSettings> jwtSettings,
-    IUserSessionIssuer sessionIssuer,
-    IPasswordHasher<ApplicationUser> passwordHasher,
-    IHttpContextAccessor httpContextAccessor,
-    ILogger<AuthService> logger) : IAuthService
+    IOptions<EmailSettings> emailSettings)
+    : IRequestHandler<RegisterCommand, RegisterOutcome>
 {
-    private const string ForgotPasswordResponseMessage =
-        "If that email is registered you'll receive a link shortly.";
-
     private readonly EmailSettings _emailSettings = emailSettings.Value;
-    private readonly JwtSettings _jwt = jwtSettings.Value;
 
-    public async Task<RegisterOutcome> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
+    public async Task<RegisterOutcome> Handle(RegisterCommand command, CancellationToken cancellationToken)
     {
+        var request = command.Request;
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
         var normalizedUserName = request.UserName.Trim().ToUpperInvariant();
@@ -44,7 +38,7 @@ public sealed class AuthService(
             .AnyAsync(u => u.NormalizedEmail == normalizedEmail, cancellationToken);
         if (emailExists)
         {
-            return ToRegisterFailure(
+            return AuthRequestCommon.ToRegisterFailure(
                 IdentityResult.Failed(new IdentityError
                 {
                     Code = "DuplicateEmail",
@@ -57,7 +51,7 @@ public sealed class AuthService(
             .AnyAsync(u => u.NormalizedUserName == normalizedUserName, cancellationToken);
         if (userNameExists)
         {
-            return ToRegisterFailure(
+            return AuthRequestCommon.ToRegisterFailure(
                 IdentityResult.Failed(new IdentityError
                 {
                     Code = "DuplicateUserName",
@@ -70,7 +64,7 @@ public sealed class AuthService(
         {
             Id = orgId,
             Name = request.OrganizationName,
-            JoinCode = GenerateJoinCode(),
+            JoinCode = AuthRequestCommon.GenerateJoinCode(),
             CreatedAtUtc = now,
         };
 
@@ -98,17 +92,17 @@ public sealed class AuthService(
             if (!createResult.Succeeded)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return ToRegisterFailure(createResult);
+                return AuthRequestCommon.ToRegisterFailure(createResult);
             }
 
             var roleResult = await userManager.AddToRoleAsync(user, DomainRoles.User);
             if (!roleResult.Succeeded)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return ToRegisterFailure(roleResult);
+                return AuthRequestCommon.ToRegisterFailure(roleResult);
             }
 
-            var verificationHashHex = HashVerificationToken(rawVerification);
+            var verificationHashHex = AuthRequestCommon.HashVerificationToken(rawVerification);
             user.EmailVerificationToken = verificationHashHex;
             user.EmailVerificationTokenExpiry = now.AddHours(24);
             user.VerificationResendCount = 0;
@@ -117,7 +111,7 @@ public sealed class AuthService(
             if (!updateVerification.Succeeded)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return ToRegisterFailure(updateVerification);
+                return AuthRequestCommon.ToRegisterFailure(updateVerification);
             }
 
             await transaction.CommitAsync(cancellationToken);
@@ -140,11 +134,20 @@ public sealed class AuthService(
 
         return new RegisterPendingEmailVerification("Check your email to verify your account.");
     }
+}
 
-    public async Task<VerifyEmailOutcome> VerifyEmailAsync(VerifyEmailRequest request, CancellationToken cancellationToken = default)
+public sealed class VerifyEmailCommandHandler(
+    TaskFlowDbContext dbContext,
+    TimeProvider timeProvider,
+    IEmailService emailService,
+    IUserSessionIssuer sessionIssuer,
+    IHttpContextAccessor httpContextAccessor) : IRequestHandler<VerifyEmailCommand, VerifyEmailOutcome>
+{
+    public async Task<VerifyEmailOutcome> Handle(VerifyEmailCommand command, CancellationToken cancellationToken)
     {
+        var request = command.Request;
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var hashHex = HashVerificationToken(request.Token.Trim());
+        var hashHex = AuthRequestCommon.HashVerificationToken(request.Token.Trim());
 
         var user = await dbContext.Users
             .IgnoreQueryFilters()
@@ -152,7 +155,7 @@ public sealed class AuthService(
                 u => u.EmailVerificationToken != null && u.EmailVerificationToken == hashHex,
                 cancellationToken);
 
-        if (user is null || !TokenHashesEqual(user.EmailVerificationToken, hashHex))
+        if (user is null || !AuthRequestCommon.TokenHashesEqual(user.EmailVerificationToken, hashHex))
         {
             return new VerifyEmailFailed(
                 "Email verification failed",
@@ -182,7 +185,7 @@ public sealed class AuthService(
         AuthResponse response;
         try
         {
-            response = await sessionIssuer.IssueSessionAsync(user, GetSessionConnectionInfo(), cancellationToken);
+            response = await sessionIssuer.IssueSessionAsync(user, AuthRequestCommon.GetSessionConnectionInfo(httpContextAccessor), cancellationToken);
         }
         catch (InvalidOperationException)
         {
@@ -202,9 +205,20 @@ public sealed class AuthService(
 
         return new VerifyEmailSucceeded(response);
     }
+}
 
-    public async Task ResendVerificationEmailAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default)
+public sealed class ResendVerificationEmailCommandHandler(
+    TaskFlowDbContext dbContext,
+    TimeProvider timeProvider,
+    UserManager<ApplicationUser> userManager,
+    IEmailService emailService,
+    IOptions<EmailSettings> emailSettings) : IRequestHandler<ResendVerificationEmailCommand>
+{
+    private readonly EmailSettings _emailSettings = emailSettings.Value;
+
+    public async Task<Unit> Handle(ResendVerificationEmailCommand command, CancellationToken cancellationToken)
     {
+        var request = command.Request;
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
 
@@ -214,22 +228,22 @@ public sealed class AuthService(
 
         if (user is null || user.EmailVerified)
         {
-            return;
+            return Unit.Value;
         }
 
         if (user.LastVerificationResendAt is not null &&
             now < user.LastVerificationResendAt.Value.AddMinutes(20))
         {
-            return;
+            return Unit.Value;
         }
 
         if (user.VerificationResendCount >= 3)
         {
-            return;
+            return Unit.Value;
         }
 
         var rawVerification = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        user.EmailVerificationToken = HashVerificationToken(rawVerification);
+        user.EmailVerificationToken = AuthRequestCommon.HashVerificationToken(rawVerification);
         user.EmailVerificationTokenExpiry = now.AddHours(24);
         user.LastVerificationResendAt = now;
         user.VerificationResendCount++;
@@ -245,12 +259,22 @@ public sealed class AuthService(
             EmailTemplates.VerifyEmail(user.UserName ?? user.Email!, verifyUrl),
             "EmailVerificationResend",
             cancellationToken);
-    }
 
-    public async Task<LoginOutcome> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
+        return Unit.Value;
+    }
+}
+
+public sealed class LoginCommandHandler(
+    TaskFlowDbContext dbContext,
+    UserManager<ApplicationUser> userManager,
+    IUserSessionIssuer sessionIssuer,
+    IHttpContextAccessor httpContextAccessor) : IRequestHandler<LoginCommand, LoginOutcome>
+{
+    public async Task<LoginOutcome> Handle(LoginCommand command, CancellationToken cancellationToken)
     {
         static Task DelayOnFailureAsync(CancellationToken ct) => Task.Delay(Random.Shared.Next(50, 200), ct);
 
+        var request = command.Request;
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
         var user = await dbContext.Users
             .IgnoreQueryFilters()
@@ -283,7 +307,7 @@ public sealed class AuthService(
         AuthResponse response;
         try
         {
-            response = await sessionIssuer.IssueSessionAsync(user, GetSessionConnectionInfo(), cancellationToken);
+            response = await sessionIssuer.IssueSessionAsync(user, AuthRequestCommon.GetSessionConnectionInfo(httpContextAccessor), cancellationToken);
         }
         catch (InvalidOperationException)
         {
@@ -293,17 +317,26 @@ public sealed class AuthService(
 
         return new LoginSucceeded(response);
     }
+}
 
-    public async Task<RefreshSessionOutcome> RefreshSessionAsync(
-        RefreshSessionRequest request,
-        CancellationToken cancellationToken = default)
+public sealed class RefreshSessionCommandHandler(
+    TaskFlowDbContext dbContext,
+    TimeProvider timeProvider,
+    IOptions<JwtSettings> jwtSettings,
+    IUserSessionIssuer sessionIssuer,
+    IHttpContextAccessor httpContextAccessor,
+    ILogger<RefreshSessionCommandHandler> logger) : IRequestHandler<RefreshSessionCommand, RefreshSessionOutcome>
+{
+    private readonly JwtSettings _jwt = jwtSettings.Value;
+
+    public async Task<RefreshSessionOutcome> Handle(RefreshSessionCommand command, CancellationToken cancellationToken)
     {
         const int maxAttempts = 3;
         for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
             try
             {
-                return await RefreshSessionOnceAsync(request, cancellationToken);
+                return await RefreshSessionOnceAsync(command.Request, cancellationToken);
             }
             catch (Exception ex) when (attempt < maxAttempts - 1 && IsPostgresTransientConcurrency(ex))
             {
@@ -338,7 +371,7 @@ public sealed class AuthService(
             var stored = await dbContext.RefreshTokens
                 .FirstOrDefaultAsync(t => t.TokenHash == hashHex, cancellationToken);
 
-            if (stored is null || !TokenHashesEqual(stored.TokenHash, hashHex))
+            if (stored is null || !AuthRequestCommon.TokenHashesEqual(stored.TokenHash, hashHex))
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return new RefreshSessionFailed(
@@ -361,7 +394,7 @@ public sealed class AuthService(
 
             if (stored.RevokedAtUtc.HasValue)
             {
-                await RevokeAllActiveRefreshTokensForUserAsync(user.Id, now, cancellationToken);
+                await AuthRequestCommon.RevokeAllActiveRefreshTokensForUserAsync(dbContext, user.Id, now, cancellationToken);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 return new RefreshSessionReuseDetected();
@@ -391,7 +424,7 @@ public sealed class AuthService(
                     rawNew,
                     hashNew,
                     newExpiryUtc,
-                    GetSessionConnectionInfo(),
+                    AuthRequestCommon.GetSessionConnectionInfo(httpContextAccessor),
                     cancellationToken);
             }
             catch (InvalidOperationException)
@@ -425,11 +458,22 @@ public sealed class AuthService(
 
         return false;
     }
+}
 
-    public async Task<ForgotPasswordResponse> ForgotPasswordAsync(
-        ForgotPasswordRequest request,
-        CancellationToken cancellationToken = default)
+public sealed class ForgotPasswordCommandHandler(
+    TaskFlowDbContext dbContext,
+    TimeProvider timeProvider,
+    UserManager<ApplicationUser> userManager,
+    IEmailService emailService,
+    IOptions<EmailSettings> emailSettings) : IRequestHandler<ForgotPasswordCommand, ForgotPasswordResponse>
+{
+    private const string ForgotPasswordResponseMessage =
+        "If that email is registered you'll receive a link shortly.";
+    private readonly EmailSettings _emailSettings = emailSettings.Value;
+
+    public async Task<ForgotPasswordResponse> Handle(ForgotPasswordCommand command, CancellationToken cancellationToken)
     {
+        var request = command.Request;
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
         var existing = await dbContext.Users
             .IgnoreQueryFilters()
@@ -481,7 +525,7 @@ public sealed class AuthService(
             user.PasswordResetRequestsThisHour++;
 
             rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-            user.PasswordResetToken = HashVerificationToken(rawToken);
+            user.PasswordResetToken = AuthRequestCommon.HashVerificationToken(rawToken);
             user.PasswordResetTokenExpiry = now.AddHours(1);
             user.PasswordResetUsed = false;
 
@@ -513,13 +557,20 @@ public sealed class AuthService(
 
         return new ForgotPasswordResponse(ForgotPasswordResponseMessage);
     }
+}
 
-    public async Task<ResetPasswordOutcome> ResetPasswordAsync(
-        ResetPasswordRequest request,
-        CancellationToken cancellationToken = default)
+public sealed class ResetPasswordCommandHandler(
+    TaskFlowDbContext dbContext,
+    TimeProvider timeProvider,
+    UserManager<ApplicationUser> userManager,
+    IPasswordHasher<ApplicationUser> passwordHasher,
+    ILogger<ResetPasswordCommandHandler> logger) : IRequestHandler<ResetPasswordCommand, ResetPasswordOutcome>
+{
+    public async Task<ResetPasswordOutcome> Handle(ResetPasswordCommand command, CancellationToken cancellationToken)
     {
+        var request = command.Request;
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var hashHex = HashVerificationToken(request.Token.Trim());
+        var hashHex = AuthRequestCommon.HashVerificationToken(request.Token.Trim());
 
         var user = await dbContext.Users
             .IgnoreQueryFilters()
@@ -527,7 +578,7 @@ public sealed class AuthService(
                 u => u.PasswordResetToken != null && u.PasswordResetToken == hashHex,
                 cancellationToken);
 
-        if (user is null || !TokenHashesEqual(user.PasswordResetToken, hashHex))
+        if (user is null || !AuthRequestCommon.TokenHashesEqual(user.PasswordResetToken, hashHex))
         {
             return new ResetPasswordInvalidOrExpired();
         }
@@ -547,10 +598,10 @@ public sealed class AuthService(
             return new ResetPasswordSameAsCurrent();
         }
 
-        var passwordPolicy = await ValidatePasswordAgainstIdentityAsync(user, request.NewPassword, cancellationToken);
+        var passwordPolicy = await AuthRequestCommon.ValidatePasswordAgainstIdentityAsync(userManager, user, request.NewPassword, cancellationToken);
         if (!passwordPolicy.Succeeded)
         {
-            return new ResetPasswordPasswordPolicyFailed(MapIdentityPasswordErrors(passwordPolicy));
+            return new ResetPasswordPasswordPolicyFailed(AuthRequestCommon.MapIdentityPasswordErrors(passwordPolicy));
         }
 
         user.PasswordHash = passwordHasher.HashPassword(user, request.NewPassword);
@@ -559,7 +610,7 @@ public sealed class AuthService(
         user.PasswordResetTokenExpiry = null;
         user.SecurityStamp = Guid.NewGuid().ToString();
 
-        await RevokeAllActiveRefreshTokensForUserAsync(user.Id, now, cancellationToken);
+        await AuthRequestCommon.RevokeAllActiveRefreshTokensForUserAsync(dbContext, user.Id, now, cancellationToken);
 
         var updateResult = await userManager.UpdateAsync(user);
         if (!updateResult.Succeeded)
@@ -573,12 +624,18 @@ public sealed class AuthService(
 
         return new ResetPasswordSucceeded("Password reset successfully. Please log in.");
     }
+}
 
-    public async Task<ChangePasswordOutcome> ChangePasswordAsync(
-        Guid userId,
-        ChangePasswordRequest request,
-        CancellationToken cancellationToken = default)
+public sealed class ChangePasswordCommandHandler(
+    TaskFlowDbContext dbContext,
+    TimeProvider timeProvider,
+    UserManager<ApplicationUser> userManager,
+    IPasswordHasher<ApplicationUser> passwordHasher) : IRequestHandler<ChangePasswordCommand, ChangePasswordOutcome>
+{
+    public async Task<ChangePasswordOutcome> Handle(ChangePasswordCommand command, CancellationToken cancellationToken)
     {
+        var userId = command.UserId;
+        var request = command.Request;
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var user = await dbContext.Users
             .IgnoreQueryFilters()
@@ -625,7 +682,7 @@ public sealed class AuthService(
             if (!changeResult.Succeeded)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return new ChangePasswordPasswordPolicyFailed(MapChangePasswordIdentityErrors(changeResult));
+                return new ChangePasswordPasswordPolicyFailed(AuthRequestCommon.MapChangePasswordIdentityErrors(changeResult));
             }
 
             await dbContext.RefreshTokens
@@ -644,12 +701,17 @@ public sealed class AuthService(
 
         return new ChangePasswordSucceeded("Password updated. Other devices have been logged out.");
     }
+}
 
-    public async Task<UpdateProfileOutcome> UpdateProfileAsync(
-        Guid userId,
-        UpdateProfileRequest request,
-        CancellationToken cancellationToken = default)
+public sealed class UpdateProfileCommandHandler(
+    TaskFlowDbContext dbContext,
+    UserManager<ApplicationUser> userManager,
+    ILogger<UpdateProfileCommandHandler> logger) : IRequestHandler<UpdateProfileCommand, UpdateProfileOutcome>
+{
+    public async Task<UpdateProfileOutcome> Handle(UpdateProfileCommand command, CancellationToken cancellationToken)
     {
+        var userId = command.UserId;
+        var request = command.Request;
         var user = await dbContext.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
@@ -712,11 +774,16 @@ public sealed class AuthService(
             .IgnoreQueryFilters()
             .AsNoTracking()
             .FirstAsync(u => u.Id == userId, cancellationToken);
-        var profile = await MapToProfileResponseAsync(refreshed, cancellationToken);
+        var profile = await AuthRequestCommon.MapToProfileResponseAsync(dbContext, userManager, refreshed, cancellationToken);
         return new UpdateProfileSucceeded(profile);
     }
+}
 
-    private async Task<UserProfileResponse> MapToProfileResponseAsync(
+internal static class AuthRequestCommon
+{
+    public static async Task<UserProfileResponse> MapToProfileResponseAsync(
+        TaskFlowDbContext dbContext,
+        UserManager<ApplicationUser> userManager,
         ApplicationUser user,
         CancellationToken cancellationToken)
     {
@@ -756,11 +823,11 @@ public sealed class AuthService(
             new DateTimeOffset(user.CreatedAtUtc, TimeSpan.Zero));
     }
 
-    private static string PickPrimaryRole(IReadOnlyList<string> roles)
+    public static string PickPrimaryRole(IReadOnlyList<string> roles)
     {
-        foreach (var r in roles)
+        foreach (var role in roles)
         {
-            if (string.Equals(r, DomainRoles.Admin, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(role, DomainRoles.Admin, StringComparison.OrdinalIgnoreCase))
             {
                 return DomainRoles.Admin;
             }
@@ -769,41 +836,19 @@ public sealed class AuthService(
         return roles.Count > 0 ? roles[0] : DomainRoles.User;
     }
 
-    private static IReadOnlyDictionary<string, string[]> MapChangePasswordIdentityErrors(IdentityResult result)
-    {
-        var messages = result.Errors.Select(e => e.Description).ToArray();
-        return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            [nameof(ChangePasswordRequest.NewPassword)] = messages,
-        };
-    }
-
-    private SessionConnectionInfo? GetSessionConnectionInfo()
-    {
-        var http = httpContextAccessor.HttpContext;
-        if (http is null)
-        {
-            return null;
-        }
-
-        var ua = http.Request.Headers.UserAgent.ToString();
-        if (string.IsNullOrWhiteSpace(ua))
-        {
-            ua = null;
-        }
-
-        var ip = http.Connection.RemoteIpAddress?.ToString();
-        return new SessionConnectionInfo(ua, ip);
-    }
-
-    private Task RevokeAllActiveRefreshTokensForUserAsync(Guid userId, DateTime utcNow, CancellationToken cancellationToken) =>
+    public static Task RevokeAllActiveRefreshTokensForUserAsync(
+        TaskFlowDbContext dbContext,
+        Guid userId,
+        DateTime utcNow,
+        CancellationToken cancellationToken) =>
         dbContext.RefreshTokens
             .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
             .ExecuteUpdateAsync(
                 s => s.SetProperty(t => t.RevokedAtUtc, utcNow),
                 cancellationToken);
 
-    private async Task<IdentityResult> ValidatePasswordAgainstIdentityAsync(
+    public static async Task<IdentityResult> ValidatePasswordAgainstIdentityAsync(
+        UserManager<ApplicationUser> userManager,
         ApplicationUser user,
         string password,
         CancellationToken cancellationToken)
@@ -824,7 +869,7 @@ public sealed class AuthService(
             : IdentityResult.Failed(errors.ToArray());
     }
 
-    private static IReadOnlyDictionary<string, string[]> MapIdentityPasswordErrors(IdentityResult result)
+    public static IReadOnlyDictionary<string, string[]> MapIdentityPasswordErrors(IdentityResult result)
     {
         var messages = result.Errors.Select(e => e.Description).ToArray();
         return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
@@ -833,12 +878,19 @@ public sealed class AuthService(
         };
     }
 
-    private static string HashVerificationToken(string rawToken)
+    public static IReadOnlyDictionary<string, string[]> MapChangePasswordIdentityErrors(IdentityResult result)
     {
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken)));
+        var messages = result.Errors.Select(e => e.Description).ToArray();
+        return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            [nameof(ChangePasswordRequest.NewPassword)] = messages,
+        };
     }
 
-    private static bool TokenHashesEqual(string? storedHex, string computedHex)
+    public static string HashVerificationToken(string rawToken) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken)));
+
+    public static bool TokenHashesEqual(string? storedHex, string computedHex)
     {
         if (storedHex is null || storedHex.Length != computedHex.Length)
         {
@@ -857,7 +909,7 @@ public sealed class AuthService(
         }
     }
 
-    private static string GenerateJoinCode()
+    public static string GenerateJoinCode()
     {
         const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         var bytes = new byte[8];
@@ -872,7 +924,7 @@ public sealed class AuthService(
         return new string(chars);
     }
 
-    private static RegisterFailed ToRegisterFailure(IdentityResult result)
+    public static RegisterFailed ToRegisterFailure(IdentityResult result)
     {
         var dict = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
@@ -906,5 +958,23 @@ public sealed class AuthService(
         }
 
         return new RegisterFailed(dict.ToDictionary(k => k.Key, v => v.Value.ToArray()));
+    }
+
+    public static SessionConnectionInfo? GetSessionConnectionInfo(IHttpContextAccessor httpContextAccessor)
+    {
+        var http = httpContextAccessor.HttpContext;
+        if (http is null)
+        {
+            return null;
+        }
+
+        var ua = http.Request.Headers.UserAgent.ToString();
+        if (string.IsNullOrWhiteSpace(ua))
+        {
+            ua = null;
+        }
+
+        var ip = http.Connection.RemoteIpAddress?.ToString();
+        return new SessionConnectionInfo(ua, ip);
     }
 }
