@@ -86,6 +86,7 @@ copy .env.example .env
 ```
 
 2. Update `.env` values, especially `JWT_SIGNING_KEY` (32+ chars).
+   For local API-only runs (without Docker), put secrets in `backend/TaskFlow.API/appsettings.user.json`.
 
 3. Start everything:
 
@@ -99,7 +100,8 @@ Services and URLs:
 - Backend via frontend proxy: `http://localhost:5173/api`
 - PostgreSQL: `localhost:5432`
 
-On first startup, the app applies migrations and seeds rich sample workspace data automatically (configured in `.env` / `Seed` settings).
+On first startup, the app applies migrations and seeds rich sample workspace data automatically in development.
+In production, startup DB initialization is disabled by default (`Startup:RunDatabaseInitialization=false`) and should be handled by deployment workflow.
 
 Stop services:
 
@@ -126,6 +128,8 @@ Backend:
 cd backend
 dotnet run --project TaskFlow.API
 ```
+
+`appsettings.user.json` is loaded with highest precedence for local overrides and is git-ignored.
 
 Frontend:
 

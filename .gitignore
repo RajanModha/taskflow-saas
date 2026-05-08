@@ -39,6 +39,7 @@ ScaffoldingReadMe.txt
 # Visual Studio / IDE
 .vs/
 *.csproj.user
+**/appsettings.user.json
 
 # Node / frontend
 node_modules/

@@ -7,6 +7,13 @@ public static class DatabaseInitializer
 {
     public static async Task InitializeAsync(this WebApplication app)
     {
+        var runInitialization = app.Configuration.GetValue<bool?>("Startup:RunDatabaseInitialization")
+            ?? app.Environment.IsDevelopment();
+        if (!runInitialization)
+        {
+            return;
+        }
+
         using var scope = app.Services.CreateScope();
         var services = scope.ServiceProvider;
         var db = services.GetRequiredService<TaskFlowDbContext>();
