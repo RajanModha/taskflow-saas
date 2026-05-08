@@ -55,41 +55,11 @@ public sealed class RefreshSessionCommandHandler(IAuthService authService) : IRe
 
 public sealed record LogoutCommand(Guid UserId, LogoutRequest Request) : IRequest;
 
-public sealed class LogoutCommandHandler(IAuthService authService) : IRequestHandler<LogoutCommand>
-{
-    public async Task<Unit> Handle(LogoutCommand request, CancellationToken cancellationToken)
-    {
-        await authService.LogoutAsync(request.UserId, request.Request, cancellationToken);
-        return Unit.Value;
-    }
-}
-
 public sealed record LogoutAllCommand(Guid UserId) : IRequest;
-
-public sealed class LogoutAllCommandHandler(IAuthService authService) : IRequestHandler<LogoutAllCommand>
-{
-    public async Task<Unit> Handle(LogoutAllCommand request, CancellationToken cancellationToken)
-    {
-        await authService.LogoutAllAsync(request.UserId, cancellationToken);
-        return Unit.Value;
-    }
-}
 
 public sealed record GetSessionsQuery(Guid UserId, string? RefreshTokenRawForCurrentMarker) : IRequest<IReadOnlyList<UserSessionItemDto>>;
 
-public sealed class GetSessionsQueryHandler(IAuthService authService) : IRequestHandler<GetSessionsQuery, IReadOnlyList<UserSessionItemDto>>
-{
-    public Task<IReadOnlyList<UserSessionItemDto>> Handle(GetSessionsQuery request, CancellationToken cancellationToken)
-        => authService.GetSessionsAsync(request.UserId, request.RefreshTokenRawForCurrentMarker, cancellationToken);
-}
-
 public sealed record TryRevokeSessionCommand(Guid UserId, Guid SessionId) : IRequest<bool>;
-
-public sealed class TryRevokeSessionCommandHandler(IAuthService authService) : IRequestHandler<TryRevokeSessionCommand, bool>
-{
-    public Task<bool> Handle(TryRevokeSessionCommand request, CancellationToken cancellationToken)
-        => authService.TryRevokeSessionAsync(request.UserId, request.SessionId, cancellationToken);
-}
 
 public sealed record LoginCommand(LoginRequest Request) : IRequest<LoginOutcome>;
 
@@ -100,12 +70,6 @@ public sealed class LoginCommandHandler(IAuthService authService) : IRequestHand
 }
 
 public sealed record GetProfileQuery(Guid UserId) : IRequest<UserProfileResponse?>;
-
-public sealed class GetProfileQueryHandler(IAuthService authService) : IRequestHandler<GetProfileQuery, UserProfileResponse?>
-{
-    public Task<UserProfileResponse?> Handle(GetProfileQuery request, CancellationToken cancellationToken)
-        => authService.GetProfileAsync(request.UserId, cancellationToken);
-}
 
 public sealed record ChangePasswordCommand(Guid UserId, ChangePasswordRequest Request) : IRequest<ChangePasswordOutcome>;
 

@@ -426,75 +426,6 @@ public sealed class AuthService(
         return false;
     }
 
-    public async Task LogoutAsync(Guid userId, LogoutRequest request, CancellationToken cancellationToken = default)
-    {
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        var hash = RefreshTokenCrypto.HashRaw(request.RefreshToken.Trim());
-        await dbContext.RefreshTokens
-            .Where(t => t.UserId == userId && t.TokenHash == hash && t.RevokedAtUtc == null)
-            .ExecuteUpdateAsync(
-                s => s.SetProperty(t => t.RevokedAtUtc, now),
-                cancellationToken);
-    }
-
-    public async Task LogoutAllAsync(Guid userId, CancellationToken cancellationToken = default)
-    {
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        await RevokeAllActiveRefreshTokensForUserAsync(userId, now, cancellationToken);
-    }
-
-    public async Task<IReadOnlyList<UserSessionItemDto>> GetSessionsAsync(
-        Guid userId,
-        string? refreshTokenRawForCurrentMarker,
-        CancellationToken cancellationToken = default)
-    {
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        string? currentHash = null;
-        if (!string.IsNullOrWhiteSpace(refreshTokenRawForCurrentMarker))
-        {
-            currentHash = RefreshTokenCrypto.HashRaw(refreshTokenRawForCurrentMarker.Trim());
-        }
-
-        var rows = await dbContext.RefreshTokens
-            .AsNoTracking()
-            .Where(t => t.UserId == userId && t.RevokedAtUtc == null && t.ExpiresAtUtc > now)
-            .OrderByDescending(t => t.CreatedAtUtc)
-            .Select(t => new
-            {
-                t.Id,
-                t.DeviceInfo,
-                t.IpAddress,
-                t.CreatedAtUtc,
-                t.ExpiresAtUtc,
-                t.TokenHash,
-            })
-            .ToListAsync(cancellationToken);
-
-        return rows
-            .Select(t => new UserSessionItemDto(
-                t.Id,
-                t.DeviceInfo,
-                t.IpAddress,
-                new DateTimeOffset(t.CreatedAtUtc, TimeSpan.Zero),
-                new DateTimeOffset(t.ExpiresAtUtc, TimeSpan.Zero),
-                currentHash is not null && TokenHashesEqual(t.TokenHash, currentHash)))
-            .ToList();
-    }
-
-    public async Task<bool> TryRevokeSessionAsync(
-        Guid userId,
-        Guid sessionId,
-        CancellationToken cancellationToken = default)
-    {
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        var affected = await dbContext.RefreshTokens
-            .Where(t => t.Id == sessionId && t.UserId == userId && t.RevokedAtUtc == null)
-            .ExecuteUpdateAsync(
-                s => s.SetProperty(t => t.RevokedAtUtc, now),
-                cancellationToken);
-        return affected > 0;
-    }
-
     public async Task<ForgotPasswordResponse> ForgotPasswordAsync(
         ForgotPasswordRequest request,
         CancellationToken cancellationToken = default)
@@ -641,19 +572,6 @@ public sealed class AuthService(
         }
 
         return new ResetPasswordSucceeded("Password reset successfully. Please log in.");
-    }
-
-    public async Task<UserProfileResponse?> GetProfileAsync(Guid userId, CancellationToken cancellationToken = default)
-    {
-        var user = await dbContext.Users
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
-        if (user is null)
-        {
-            return null;
-        }
-
-        return await MapToProfileResponseAsync(user, cancellationToken);
     }
 
     public async Task<ChangePasswordOutcome> ChangePasswordAsync(
