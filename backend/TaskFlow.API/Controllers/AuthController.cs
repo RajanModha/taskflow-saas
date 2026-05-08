@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -12,7 +13,7 @@ namespace TaskFlow.API.Controllers;
 [ApiController]
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/[controller]")]
-public sealed class AuthController(IAuthService authService) : ControllerBase
+public sealed class AuthController(IMediator mediator) : ControllerBase
 {
     /// <summary>Register a new user (assigned the User role). Sends a verification email; no JWT until verified.</summary>
     [HttpPost("register")]
@@ -21,7 +22,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
-        var outcome = await authService.RegisterAsync(request, cancellationToken);
+        var outcome = await mediator.Send(new RegisterCommand(request), cancellationToken);
         return outcome switch
         {
             RegisterPendingEmailVerification p => CreatedAtAction(
@@ -39,7 +40,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request, CancellationToken cancellationToken)
     {
-        var outcome = await authService.VerifyEmailAsync(request, cancellationToken);
+        var outcome = await mediator.Send(new VerifyEmailCommand(request), cancellationToken);
         return outcome switch
         {
             VerifyEmailSucceeded s => Ok(s.Response),
@@ -56,7 +57,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         [FromBody] ResendVerificationRequest request,
         CancellationToken cancellationToken)
     {
-        await authService.ResendVerificationEmailAsync(request, cancellationToken);
+        await mediator.Send(new ResendVerificationEmailCommand(request), cancellationToken);
         return Ok();
     }
 
@@ -70,7 +71,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         [FromBody] ForgotPasswordRequest request,
         CancellationToken cancellationToken)
     {
-        var response = await authService.ForgotPasswordAsync(request, cancellationToken);
+        var response = await mediator.Send(new ForgotPasswordCommand(request), cancellationToken);
         return Ok(response);
     }
 
@@ -87,7 +88,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     {
         await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
 
-        var outcome = await authService.ResetPasswordAsync(request, cancellationToken);
+        var outcome = await mediator.Send(new ResetPasswordCommand(request), cancellationToken);
         return outcome switch
         {
             ResetPasswordSucceeded s => Ok(new ResetPasswordResponse(s.Message)),
@@ -115,7 +116,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     {
         await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
 
-        var outcome = await authService.RefreshSessionAsync(request, cancellationToken);
+        var outcome = await mediator.Send(new RefreshSessionCommand(request), cancellationToken);
         return outcome switch
         {
             RefreshSessionSucceeded s => Ok(s.Response),
@@ -141,7 +142,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
             return Unauthorized();
         }
 
-        await authService.LogoutAsync(userId.Value, request, cancellationToken);
+        await mediator.Send(new LogoutCommand(userId.Value, request), cancellationToken);
         return NoContent();
     }
 
@@ -157,7 +158,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
             return Unauthorized();
         }
 
-        await authService.LogoutAllAsync(userId.Value, cancellationToken);
+        await mediator.Send(new LogoutAllCommand(userId.Value), cancellationToken);
         return NoContent();
     }
 
@@ -177,7 +178,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         }
 
         var refresh = request?.RefreshToken;
-        var sessions = await authService.GetSessionsAsync(userId.Value, refresh, cancellationToken);
+        var sessions = await mediator.Send(new GetSessionsQuery(userId.Value, refresh), cancellationToken);
         return Ok(sessions);
     }
 
@@ -194,7 +195,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
             return Unauthorized();
         }
 
-        var revoked = await authService.TryRevokeSessionAsync(userId.Value, sessionId, cancellationToken);
+        var revoked = await mediator.Send(new TryRevokeSessionCommand(userId.Value, sessionId), cancellationToken);
         return revoked ? NoContent() : NotFound();
     }
 
@@ -210,7 +211,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
-        var outcome = await authService.LoginAsync(request, cancellationToken);
+        var outcome = await mediator.Send(new LoginCommand(request), cancellationToken);
         return outcome switch
         {
             LoginSucceeded s => Ok(s.Response),
@@ -240,7 +241,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
             return Unauthorized();
         }
 
-        var profile = await authService.GetProfileAsync(userId.Value, cancellationToken);
+        var profile = await mediator.Send(new GetProfileQuery(userId.Value), cancellationToken);
         return profile is null ? NotFound() : Ok(profile);
     }
 
@@ -264,7 +265,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
             return Unauthorized();
         }
 
-        var outcome = await authService.ChangePasswordAsync(userId.Value, request, cancellationToken);
+        var outcome = await mediator.Send(new ChangePasswordCommand(userId.Value, request), cancellationToken);
         return outcome switch
         {
             ChangePasswordSucceeded s => Ok(new ChangePasswordResponse(s.Message)),
@@ -300,7 +301,7 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
             return Unauthorized();
         }
 
-        var outcome = await authService.UpdateProfileAsync(userId.Value, request, cancellationToken);
+        var outcome = await mediator.Send(new UpdateProfileCommand(userId.Value, request), cancellationToken);
         return outcome switch
         {
             UpdateProfileSucceeded s => Ok(s.Response),
