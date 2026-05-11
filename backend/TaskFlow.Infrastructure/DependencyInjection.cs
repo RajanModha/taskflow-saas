@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using MediatR;
 using TaskFlow.Application.Abstractions;
 using TaskFlow.Application.Auth;
 using TaskFlow.Application.Tenancy;
@@ -69,6 +70,8 @@ public static class DependencyInjection
         services.AddScoped<IWorkspaceTaskTemplateRepository, WorkspaceTaskTemplateRepository>();
         services.AddScoped<IWorkspaceManagementRepository, WorkspaceManagementRepository>();
         services.AddScoped<ITaskReadModelAssembler, EfTaskReadModelAssembler>();
+        services.AddScoped<IAuthRepository, AuthRepository>();
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(AuthTimingBehavior<,>));
 
         services
             .AddIdentity<ApplicationUser, ApplicationRole>(options =>

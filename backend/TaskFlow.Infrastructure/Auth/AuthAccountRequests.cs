@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using TaskFlow.Application.Auth;
 using TaskFlow.Domain.Common;
+using TaskFlow.Domain.Repositories;
 using TaskFlow.Infrastructure.Email;
 using TaskFlow.Infrastructure.Identity;
 using TaskFlow.Infrastructure.Persistence;
@@ -18,7 +19,7 @@ namespace TaskFlow.Infrastructure.Auth;
 
 public sealed class RegisterCommandHandler(
     UserManager<ApplicationUser> userManager,
-    TaskFlowDbContext dbContext,
+    IAuthRepository authRepository,
     TimeProvider timeProvider,
     IEmailService emailService,
     IOptions<EmailSettings> emailSettings)
@@ -33,9 +34,7 @@ public sealed class RegisterCommandHandler(
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
         var normalizedUserName = request.UserName.Trim().ToUpperInvariant();
 
-        var emailExists = await dbContext.Users
-            .IgnoreQueryFilters()
-            .AnyAsync(u => u.NormalizedEmail == normalizedEmail, cancellationToken);
+        var emailExists = await authRepository.EmailExistsAsync(normalizedEmail, cancellationToken);
         if (emailExists)
         {
             return AuthRequestCommon.ToRegisterFailure(
@@ -46,9 +45,7 @@ public sealed class RegisterCommandHandler(
                 }));
         }
 
-        var userNameExists = await dbContext.Users
-            .IgnoreQueryFilters()
-            .AnyAsync(u => u.NormalizedUserName == normalizedUserName, cancellationToken);
+        var userNameExists = await authRepository.UserNameExistsAsync(normalizedUserName, cancellationToken);
         if (userNameExists)
         {
             return AuthRequestCommon.ToRegisterFailure(
@@ -83,23 +80,19 @@ public sealed class RegisterCommandHandler(
 
         var rawVerification = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        try
+        return await authRepository.WithTransactionAsync(async ct =>
         {
-            await dbContext.Organizations.AddAsync(organization, cancellationToken);
-
+            await authRepository.AddOrganizationAsync(organization, ct);
             var createResult = await userManager.CreateAsync(user, request.Password);
             if (!createResult.Succeeded)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return AuthRequestCommon.ToRegisterFailure(createResult);
+                return (false, (RegisterOutcome)AuthRequestCommon.ToRegisterFailure(createResult));
             }
 
             var roleResult = await userManager.AddToRoleAsync(user, DomainRoles.User);
             if (!roleResult.Succeeded)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return AuthRequestCommon.ToRegisterFailure(roleResult);
+                return (false, (RegisterOutcome)AuthRequestCommon.ToRegisterFailure(roleResult));
             }
 
             var verificationHashHex = AuthRequestCommon.HashVerificationToken(rawVerification);
@@ -110,36 +103,28 @@ public sealed class RegisterCommandHandler(
             var updateVerification = await userManager.UpdateAsync(user);
             if (!updateVerification.Succeeded)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return AuthRequestCommon.ToRegisterFailure(updateVerification);
+                return (false, (RegisterOutcome)AuthRequestCommon.ToRegisterFailure(updateVerification));
             }
+            var baseUrl = _emailSettings.FrontendBaseUrl.TrimEnd('/');
+            var verifyUrl = $"{baseUrl}/verify-email?token={Uri.EscapeDataString(rawVerification)}";
+            await emailService.SendEmailAsync(
+                user.Email!,
+                user.UserName ?? user.Email!,
+                "Verify your TaskFlow email",
+                EmailTemplates.VerifyEmail(user.UserName ?? user.Email!, verifyUrl),
+                "RegisterEmailVerification",
+                ct);
 
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
-
-        var baseUrl = _emailSettings.FrontendBaseUrl.TrimEnd('/');
-        var verifyUrl = $"{baseUrl}/verify-email?token={Uri.EscapeDataString(rawVerification)}";
-        await emailService.SendEmailAsync(
-            user.Email!,
-            user.UserName ?? user.Email!,
-            "Verify your TaskFlow email",
-            EmailTemplates.VerifyEmail(user.UserName ?? user.Email!, verifyUrl),
-            "RegisterEmailVerification",
-            cancellationToken);
-
-        return new RegisterPendingEmailVerification("Check your email to verify your account.");
+            return (true, (RegisterOutcome)new RegisterPendingEmailVerification("Check your email to verify your account."));
+        }, cancellationToken);
     }
 }
 
 public sealed class VerifyEmailCommandHandler(
-    TaskFlowDbContext dbContext,
+    IAuthRepository authRepository,
     TimeProvider timeProvider,
     IEmailService emailService,
+    UserManager<ApplicationUser> userManager,
     IUserSessionIssuer sessionIssuer,
     IHttpContextAccessor httpContextAccessor) : IRequestHandler<VerifyEmailCommand, VerifyEmailOutcome>
 {
@@ -149,7 +134,7 @@ public sealed class VerifyEmailCommandHandler(
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var hashHex = AuthRequestCommon.HashVerificationToken(request.Token.Trim());
 
-        var user = await dbContext.Users
+        var user = await userManager.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(
                 u => u.EmailVerificationToken != null && u.EmailVerificationToken == hashHex,
@@ -171,9 +156,7 @@ public sealed class VerifyEmailCommandHandler(
                 StatusCodes.Status400BadRequest);
         }
 
-        var organization = await dbContext.Organizations.FirstOrDefaultAsync(
-            o => o.Id == user.OrganizationId,
-            cancellationToken);
+        var organization = await authRepository.GetOrganizationByIdAsync(user.OrganizationId, cancellationToken);
 
         user.EmailVerified = true;
         user.EmailConfirmed = true;
@@ -208,7 +191,6 @@ public sealed class VerifyEmailCommandHandler(
 }
 
 public sealed class ResendVerificationEmailCommandHandler(
-    TaskFlowDbContext dbContext,
     TimeProvider timeProvider,
     UserManager<ApplicationUser> userManager,
     IEmailService emailService,
@@ -222,7 +204,7 @@ public sealed class ResendVerificationEmailCommandHandler(
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
 
-        var user = await dbContext.Users
+        var user = await userManager.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.NormalizedEmail == normalizedEmail, cancellationToken);
 
@@ -265,7 +247,6 @@ public sealed class ResendVerificationEmailCommandHandler(
 }
 
 public sealed class LoginCommandHandler(
-    TaskFlowDbContext dbContext,
     UserManager<ApplicationUser> userManager,
     IUserSessionIssuer sessionIssuer,
     IHttpContextAccessor httpContextAccessor) : IRequestHandler<LoginCommand, LoginOutcome>
@@ -276,7 +257,7 @@ public sealed class LoginCommandHandler(
 
         var request = command.Request;
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
-        var user = await dbContext.Users
+        var user = await userManager.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.NormalizedEmail == normalizedEmail, cancellationToken);
 
@@ -320,9 +301,10 @@ public sealed class LoginCommandHandler(
 }
 
 public sealed class RefreshSessionCommandHandler(
-    TaskFlowDbContext dbContext,
+    IAuthRepository authRepository,
     TimeProvider timeProvider,
     IOptions<JwtSettings> jwtSettings,
+    UserManager<ApplicationUser> userManager,
     IUserSessionIssuer sessionIssuer,
     IHttpContextAccessor httpContextAccessor,
     ILogger<RefreshSessionCommandHandler> logger) : IRequestHandler<RefreshSessionCommand, RefreshSessionOutcome>
@@ -340,7 +322,7 @@ public sealed class RefreshSessionCommandHandler(
             }
             catch (Exception ex) when (attempt < maxAttempts - 1 && IsPostgresTransientConcurrency(ex))
             {
-                dbContext.ChangeTracker.Clear();
+                authRepository.ClearChangeTracker();
                 logger.LogWarning(
                     ex,
                     "Refresh token rotation hit retriable DB concurrency (attempt {Attempt} of {Max}).",
@@ -363,58 +345,48 @@ public sealed class RefreshSessionCommandHandler(
         var raw = request.RefreshToken.Trim();
         var hashHex = RefreshTokenCrypto.HashRaw(raw);
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable,
-            cancellationToken);
-        try
+        return await authRepository.WithTransactionAsync(async ct =>
         {
-            var stored = await dbContext.RefreshTokens
-                .FirstOrDefaultAsync(t => t.TokenHash == hashHex, cancellationToken);
+            var stored = await authRepository.GetRefreshTokenByHashAsync(hashHex, ct);
 
             if (stored is null || !AuthRequestCommon.TokenHashesEqual(stored.TokenHash, hashHex))
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return new RefreshSessionFailed(
+                return (false, (RefreshSessionOutcome)new RefreshSessionFailed(
                     "Invalid refresh token",
                     "The refresh token is invalid or has been revoked.",
-                    StatusCodes.Status401Unauthorized);
+                    StatusCodes.Status401Unauthorized));
             }
 
-            var user = await dbContext.Users
+            var user = await userManager.Users
                 .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(u => u.Id == stored.UserId, cancellationToken);
+                .FirstOrDefaultAsync(u => u.Id == stored.UserId, ct);
             if (user is null || !user.EmailVerified || user.OrganizationId == Guid.Empty)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return new RefreshSessionFailed(
+                return (false, (RefreshSessionOutcome)new RefreshSessionFailed(
                     "Invalid refresh token",
                     "The refresh token is invalid or has been revoked.",
-                    StatusCodes.Status401Unauthorized);
+                    StatusCodes.Status401Unauthorized));
             }
 
             if (stored.RevokedAtUtc.HasValue)
             {
-                await AuthRequestCommon.RevokeAllActiveRefreshTokensForUserAsync(dbContext, user.Id, now, cancellationToken);
-                await dbContext.SaveChangesAsync(cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                return new RefreshSessionReuseDetected();
+                await authRepository.RevokeAllActiveRefreshTokensForUserAsync(user.Id, now, ct);
+                return (true, (RefreshSessionOutcome)new RefreshSessionReuseDetected());
             }
 
             if (stored.ExpiresAtUtc <= now)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return new RefreshSessionFailed(
+                return (false, (RefreshSessionOutcome)new RefreshSessionFailed(
                     "Invalid refresh token",
                     "The refresh token is invalid or has been revoked.",
-                    StatusCodes.Status401Unauthorized);
+                    StatusCodes.Status401Unauthorized));
             }
 
             var (rawNew, hashNew) = RefreshTokenCrypto.GenerateToken();
             var refreshDays = _jwt.RefreshTokenDays <= 0 ? 30 : _jwt.RefreshTokenDays;
             var newExpiryUtc = now.AddDays(refreshDays);
 
-            stored.RevokedAtUtc = now;
-            stored.ReplacedByTokenHash = hashNew;
+            await authRepository.MarkRefreshTokenRotatedAsync(stored.Id, now, hashNew, ct);
 
             AuthResponse response;
             try
@@ -425,25 +397,17 @@ public sealed class RefreshSessionCommandHandler(
                     hashNew,
                     newExpiryUtc,
                     AuthRequestCommon.GetSessionConnectionInfo(httpContextAccessor),
-                    cancellationToken);
+                    ct);
             }
             catch (InvalidOperationException)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return new RefreshSessionFailed(
+                return (false, (RefreshSessionOutcome)new RefreshSessionFailed(
                     "Invalid refresh token",
                     "The refresh token is invalid or has been revoked.",
-                    StatusCodes.Status401Unauthorized);
+                    StatusCodes.Status401Unauthorized));
             }
-
-            await transaction.CommitAsync(cancellationToken);
-            return new RefreshSessionSucceeded(response);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
+            return (true, (RefreshSessionOutcome)new RefreshSessionSucceeded(response));
+        }, cancellationToken, IsolationLevel.Serializable);
     }
 
     private static bool IsPostgresTransientConcurrency(Exception ex)
@@ -461,7 +425,7 @@ public sealed class RefreshSessionCommandHandler(
 }
 
 public sealed class ForgotPasswordCommandHandler(
-    TaskFlowDbContext dbContext,
+    IAuthRepository authRepository,
     TimeProvider timeProvider,
     UserManager<ApplicationUser> userManager,
     IEmailService emailService,
@@ -475,7 +439,7 @@ public sealed class ForgotPasswordCommandHandler(
     {
         var request = command.Request;
         var normalizedEmail = request.Email.Trim().ToUpperInvariant();
-        var existing = await dbContext.Users
+        var existing = await userManager.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.NormalizedEmail == normalizedEmail, cancellationToken);
 
@@ -489,19 +453,15 @@ public sealed class ForgotPasswordCommandHandler(
         string? sendEmail = null;
         string? sendName = null;
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable,
-            cancellationToken);
-        try
+        return await authRepository.WithTransactionAsync(async ct =>
         {
-            var user = await dbContext.Users
+            var user = await userManager.Users
                 .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+                .FirstOrDefaultAsync(u => u.Id == userId, ct);
 
             if (user is null)
             {
-                await transaction.CommitAsync(cancellationToken);
-                return new ForgotPasswordResponse(ForgotPasswordResponseMessage);
+                return (true, new ForgotPasswordResponse(ForgotPasswordResponseMessage));
             }
 
             var now = timeProvider.GetUtcNow().UtcDateTime;
@@ -518,8 +478,7 @@ public sealed class ForgotPasswordCommandHandler(
             if (user.PasswordResetRequestsThisHour >= 3)
             {
                 await userManager.UpdateAsync(user);
-                await transaction.CommitAsync(cancellationToken);
-                return new ForgotPasswordResponse(ForgotPasswordResponseMessage);
+                return (true, new ForgotPasswordResponse(ForgotPasswordResponseMessage));
             }
 
             user.PasswordResetRequestsThisHour++;
@@ -532,35 +491,28 @@ public sealed class ForgotPasswordCommandHandler(
             await userManager.UpdateAsync(user);
             sendEmail = user.Email;
             sendName = user.UserName;
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
+            if (rawToken is null || string.IsNullOrEmpty(sendEmail))
+            {
+                return (true, new ForgotPasswordResponse(ForgotPasswordResponseMessage));
+            }
 
-        if (rawToken is null || string.IsNullOrEmpty(sendEmail))
-        {
-            return new ForgotPasswordResponse(ForgotPasswordResponseMessage);
-        }
+            var baseUrl = _emailSettings.FrontendBaseUrl.TrimEnd('/');
+            var url = $"{baseUrl}/reset-password?token={Uri.EscapeDataString(rawToken)}";
+            await emailService.SendEmailAsync(
+                sendEmail,
+                sendName ?? sendEmail,
+                "Reset your TaskFlow password",
+                EmailTemplates.ResetPassword(sendName ?? sendEmail, url),
+                "PasswordReset",
+                ct);
 
-        var baseUrl = _emailSettings.FrontendBaseUrl.TrimEnd('/');
-        var url = $"{baseUrl}/reset-password?token={Uri.EscapeDataString(rawToken)}";
-        await emailService.SendEmailAsync(
-            sendEmail,
-            sendName ?? sendEmail,
-            "Reset your TaskFlow password",
-            EmailTemplates.ResetPassword(sendName ?? sendEmail, url),
-            "PasswordReset",
-            cancellationToken);
-
-        return new ForgotPasswordResponse(ForgotPasswordResponseMessage);
+            return (true, new ForgotPasswordResponse(ForgotPasswordResponseMessage));
+        }, cancellationToken, IsolationLevel.Serializable);
     }
 }
 
 public sealed class ResetPasswordCommandHandler(
-    TaskFlowDbContext dbContext,
+    IAuthRepository authRepository,
     TimeProvider timeProvider,
     UserManager<ApplicationUser> userManager,
     IPasswordHasher<ApplicationUser> passwordHasher,
@@ -572,7 +524,7 @@ public sealed class ResetPasswordCommandHandler(
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var hashHex = AuthRequestCommon.HashVerificationToken(request.Token.Trim());
 
-        var user = await dbContext.Users
+        var user = await userManager.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(
                 u => u.PasswordResetToken != null && u.PasswordResetToken == hashHex,
@@ -610,7 +562,7 @@ public sealed class ResetPasswordCommandHandler(
         user.PasswordResetTokenExpiry = null;
         user.SecurityStamp = Guid.NewGuid().ToString();
 
-        await AuthRequestCommon.RevokeAllActiveRefreshTokensForUserAsync(dbContext, user.Id, now, cancellationToken);
+        await authRepository.RevokeAllActiveRefreshTokensForUserAsync(user.Id, now, cancellationToken);
 
         var updateResult = await userManager.UpdateAsync(user);
         if (!updateResult.Succeeded)
@@ -627,7 +579,7 @@ public sealed class ResetPasswordCommandHandler(
 }
 
 public sealed class ChangePasswordCommandHandler(
-    TaskFlowDbContext dbContext,
+    IAuthRepository authRepository,
     TimeProvider timeProvider,
     UserManager<ApplicationUser> userManager,
     IPasswordHasher<ApplicationUser> passwordHasher) : IRequestHandler<ChangePasswordCommand, ChangePasswordOutcome>
@@ -637,7 +589,7 @@ public sealed class ChangePasswordCommandHandler(
         var userId = command.UserId;
         var request = command.Request;
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var user = await dbContext.Users
+        var user = await userManager.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
         if (user is null)
@@ -646,14 +598,7 @@ public sealed class ChangePasswordCommandHandler(
         }
 
         var refreshHash = RefreshTokenCrypto.HashRaw(request.RefreshToken.Trim());
-        var sessionValid = await dbContext.RefreshTokens
-            .AsNoTracking()
-            .AnyAsync(
-                t => t.UserId == userId &&
-                     t.TokenHash == refreshHash &&
-                     t.RevokedAtUtc == null &&
-                     t.ExpiresAtUtc > now,
-                cancellationToken);
+        var sessionValid = await authRepository.HasValidRefreshTokenAsync(userId, refreshHash, now, cancellationToken);
         if (!sessionValid)
         {
             return new ChangePasswordInvalidRefresh();
@@ -672,8 +617,7 @@ public sealed class ChangePasswordCommandHandler(
             return new ChangePasswordNewSameAsCurrent();
         }
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        try
+        return await authRepository.WithTransactionAsync(async ct =>
         {
             var changeResult = await userManager.ChangePasswordAsync(
                 user,
@@ -681,30 +625,17 @@ public sealed class ChangePasswordCommandHandler(
                 request.NewPassword);
             if (!changeResult.Succeeded)
             {
-                await transaction.RollbackAsync(cancellationToken);
-                return new ChangePasswordPasswordPolicyFailed(AuthRequestCommon.MapChangePasswordIdentityErrors(changeResult));
+                return (false, (ChangePasswordOutcome)new ChangePasswordPasswordPolicyFailed(AuthRequestCommon.MapChangePasswordIdentityErrors(changeResult)));
             }
 
-            await dbContext.RefreshTokens
-                .Where(t => t.UserId == userId && t.RevokedAtUtc == null && t.TokenHash != refreshHash)
-                .ExecuteUpdateAsync(
-                    s => s.SetProperty(t => t.RevokedAtUtc, now),
-                    cancellationToken);
-
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
-
-        return new ChangePasswordSucceeded("Password updated. Other devices have been logged out.");
+            await authRepository.RevokeOtherActiveRefreshTokensAsync(userId, refreshHash, now, ct);
+            return (true, (ChangePasswordOutcome)new ChangePasswordSucceeded("Password updated. Other devices have been logged out."));
+        }, cancellationToken);
     }
 }
 
 public sealed class UpdateProfileCommandHandler(
-    TaskFlowDbContext dbContext,
+    IAuthRepository authRepository,
     UserManager<ApplicationUser> userManager,
     ILogger<UpdateProfileCommandHandler> logger) : IRequestHandler<UpdateProfileCommand, UpdateProfileOutcome>
 {
@@ -712,7 +643,7 @@ public sealed class UpdateProfileCommandHandler(
     {
         var userId = command.UserId;
         var request = command.Request;
-        var user = await dbContext.Users
+        var user = await userManager.Users
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
         if (user is null)
@@ -726,13 +657,11 @@ public sealed class UpdateProfileCommandHandler(
             var normalized = trimmedName.ToUpperInvariant();
             if (normalized != user.NormalizedUserName)
             {
-                var takenInOrg = await dbContext.Users
-                    .IgnoreQueryFilters()
-                    .AnyAsync(
-                        u => u.OrganizationId == user.OrganizationId &&
-                             u.Id != userId &&
-                             u.NormalizedUserName == normalized,
-                        cancellationToken);
+                var takenInOrg = await authRepository.UserNameTakenInOrganizationAsync(
+                    user.OrganizationId,
+                    userId,
+                    normalized,
+                    cancellationToken);
                 if (takenInOrg)
                 {
                     return new UpdateProfileUserNameConflict();
@@ -770,11 +699,15 @@ public sealed class UpdateProfileCommandHandler(
             }
         }
 
-        var refreshed = await dbContext.Users
+        var refreshed = await userManager.Users
             .IgnoreQueryFilters()
             .AsNoTracking()
-            .FirstAsync(u => u.Id == userId, cancellationToken);
-        var profile = await AuthRequestCommon.MapToProfileResponseAsync(dbContext, userManager, refreshed, cancellationToken);
+            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        if (refreshed is null)
+        {
+            return new UpdateProfileServerError();
+        }
+        var profile = await AuthRequestCommon.MapToProfileResponseAsync(authRepository, userManager, refreshed, cancellationToken);
         return new UpdateProfileSucceeded(profile);
     }
 }
@@ -782,7 +715,7 @@ public sealed class UpdateProfileCommandHandler(
 internal static class AuthRequestCommon
 {
     public static async Task<UserProfileResponse> MapToProfileResponseAsync(
-        TaskFlowDbContext dbContext,
+        IAuthRepository authRepository,
         UserManager<ApplicationUser> userManager,
         ApplicationUser user,
         CancellationToken cancellationToken)
@@ -805,9 +738,7 @@ internal static class AuthRequestCommon
         }
 
         var roles = (await userManager.GetRolesAsync(user)).ToArray();
-        var organization = await dbContext.Organizations
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == user.OrganizationId, cancellationToken);
+        var organization = await authRepository.GetOrganizationByIdAsync(user.OrganizationId, cancellationToken);
 
         return new UserProfileResponse(
             user.Id,
@@ -835,17 +766,6 @@ internal static class AuthRequestCommon
 
         return roles.Count > 0 ? roles[0] : DomainRoles.User;
     }
-
-    public static Task RevokeAllActiveRefreshTokensForUserAsync(
-        TaskFlowDbContext dbContext,
-        Guid userId,
-        DateTime utcNow,
-        CancellationToken cancellationToken) =>
-        dbContext.RefreshTokens
-            .Where(t => t.UserId == userId && t.RevokedAtUtc == null)
-            .ExecuteUpdateAsync(
-                s => s.SetProperty(t => t.RevokedAtUtc, utcNow),
-                cancellationToken);
 
     public static async Task<IdentityResult> ValidatePasswordAgainstIdentityAsync(
         UserManager<ApplicationUser> userManager,

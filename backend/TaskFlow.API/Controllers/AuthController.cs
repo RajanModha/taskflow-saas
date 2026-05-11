@@ -1,9 +1,8 @@
-using System.Security.Claims;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.RateLimiting;
+using TaskFlow.API.Extensions;
 using TaskFlow.Application.Auth;
 using Asp.Versioning;
 
@@ -29,7 +28,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
                 nameof(Me),
                 new { },
                 new RegisterPendingResponse(p.Message)),
-            RegisterFailed f => ValidationRegistrationErrors(f.Errors),
+            RegisterFailed f => this.ValidationProblemFromErrors(f.Errors),
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
         };
     }
@@ -86,8 +85,6 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         [FromBody] ResetPasswordRequest request,
         CancellationToken cancellationToken)
     {
-        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
-
         var outcome = await mediator.Send(new ResetPasswordCommand(request), cancellationToken);
         return outcome switch
         {
@@ -96,8 +93,8 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
                 title: "Password reset failed",
                 detail: "This reset link is invalid or has expired.",
                 statusCode: StatusCodes.Status400BadRequest),
-            ResetPasswordSameAsCurrent => SamePasswordValidationProblem(),
-            ResetPasswordPasswordPolicyFailed f => PasswordPolicyValidationProblem(f.Errors),
+            ResetPasswordSameAsCurrent => this.SamePasswordValidationProblem(),
+            ResetPasswordPasswordPolicyFailed f => this.ValidationProblemFromErrors(f.Errors),
             ResetPasswordServerError => Problem(
                 title: "Password reset failed",
                 detail: "Unable to complete password reset. Please try again or request a new reset link.",
@@ -114,8 +111,6 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Refresh([FromBody] RefreshSessionRequest request, CancellationToken cancellationToken)
     {
-        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
-
         var outcome = await mediator.Send(new RefreshSessionCommand(request), cancellationToken);
         return outcome switch
         {
@@ -136,7 +131,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Logout([FromBody] LogoutRequest request, CancellationToken cancellationToken)
     {
-        var userId = TryGetUserId();
+        var userId = User.TryGetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -152,7 +147,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> LogoutAll(CancellationToken cancellationToken)
     {
-        var userId = TryGetUserId();
+        var userId = User.TryGetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -171,7 +166,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         [FromBody] GetSessionsRequest? request,
         CancellationToken cancellationToken)
     {
-        var userId = TryGetUserId();
+        var userId = User.TryGetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -189,7 +184,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteSession(Guid sessionId, CancellationToken cancellationToken)
     {
-        var userId = TryGetUserId();
+        var userId = User.TryGetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -235,7 +230,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Me(CancellationToken cancellationToken)
     {
-        var userId = TryGetUserId();
+        var userId = User.TryGetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -257,9 +252,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         [FromBody] ChangePasswordRequest request,
         CancellationToken cancellationToken)
     {
-        await Task.Delay(Random.Shared.Next(50, 150), cancellationToken);
-
-        var userId = TryGetUserId();
+        var userId = User.TryGetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -273,12 +266,12 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
                 title: "Invalid password",
                 detail: "Current password is incorrect.",
                 statusCode: StatusCodes.Status401Unauthorized),
-            ChangePasswordNewSameAsCurrent => NewPasswordSameAsCurrentValidationProblem(),
+            ChangePasswordNewSameAsCurrent => this.NewPasswordSameAsCurrentValidationProblem(),
             ChangePasswordInvalidRefresh => Problem(
                 title: "Invalid refresh token",
                 detail: "Provide a valid refresh token for this device.",
                 statusCode: StatusCodes.Status400BadRequest),
-            ChangePasswordPasswordPolicyFailed f => PasswordPolicyValidationProblem(f.Errors),
+            ChangePasswordPasswordPolicyFailed f => this.ValidationProblemFromErrors(f.Errors),
             ChangePasswordServerError => Problem(statusCode: StatusCodes.Status500InternalServerError),
             _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
         };
@@ -295,7 +288,7 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         [FromBody] UpdateProfileRequest request,
         CancellationToken cancellationToken)
     {
-        var userId = TryGetUserId();
+        var userId = User.TryGetUserId();
         if (userId is null)
         {
             return Unauthorized();
@@ -314,56 +307,5 @@ public sealed class AuthController(IMediator mediator) : ControllerBase
         };
     }
 
-    private Guid? TryGetUserId()
-    {
-        var userIdRaw = User.FindFirstValue(ClaimTypes.NameIdentifier)
-                        ?? User.FindFirstValue(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
-        return Guid.TryParse(userIdRaw, out var id) ? id : null;
-    }
-
-    private ActionResult PasswordPolicyValidationProblem(IReadOnlyDictionary<string, string[]> errors)
-    {
-        var modelState = new ModelStateDictionary();
-        foreach (var kvp in errors)
-        {
-            foreach (var message in kvp.Value)
-            {
-                modelState.AddModelError(kvp.Key, message);
-            }
-        }
-
-        return ValidationProblem(modelState);
-    }
-
-    private ActionResult NewPasswordSameAsCurrentValidationProblem()
-    {
-        var modelState = new ModelStateDictionary();
-        modelState.AddModelError(
-            nameof(ChangePasswordRequest.NewPassword),
-            "New password must be different from your current password.");
-        return ValidationProblem(modelState);
-    }
-
-    private ActionResult SamePasswordValidationProblem()
-    {
-        var modelState = new ModelStateDictionary();
-        modelState.AddModelError(
-            nameof(ResetPasswordRequest.NewPassword),
-            "Your new password must be different from your current password.");
-        return ValidationProblem(modelState);
-    }
-
-    private ActionResult ValidationRegistrationErrors(IReadOnlyDictionary<string, string[]> errors)
-    {
-        foreach (var kvp in errors)
-        {
-            foreach (var message in kvp.Value)
-            {
-                ModelState.AddModelError(kvp.Key, message);
-            }
-        }
-
-        return ValidationProblem(ModelState);
-    }
 }
 
