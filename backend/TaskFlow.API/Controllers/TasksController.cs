@@ -11,6 +11,7 @@ using TaskFlow.Application.Auth;
 using TaskFlow.Application.Activity;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
+using TaskFlow.Application.Tasks.Queries;
 using TaskFlow.Domain.Repositories;
 using TaskFlow.Application.Workspaces;
 using TaskStatus = TaskFlow.Domain.Entities.TaskStatus;
@@ -24,7 +25,7 @@ namespace TaskFlow.API.Controllers;
 [ApiVersion("1.0")]
 [Authorize]
 [Route("api/v{version:apiVersion}/[controller]")]
-public sealed class TasksController(IMediator mediator, ITaskExportRepository taskRepository) : ControllerBase
+public sealed class TasksController(IMediator mediator) : ControllerBase
 {
     public sealed record CreateTaskFromTemplateOverridesRequest(
         string? Title,
@@ -198,25 +199,26 @@ public sealed class TasksController(IMediator mediator, ITaskExportRepository ta
             tagId,
             IncludeDeleted: false);
 
-        var total = await taskRepository.GetExportCountAsync(filters, cancellationToken);
-        if (total > 10_000)
+        var validation = await mediator.Send(new ValidateTaskExportQuery(filters), cancellationToken);
+        if (validation is not TaskExportValidated validated)
         {
             return BadRequest(new TasksExportLimitResponse("Narrow your filters. Max 10,000 rows."));
         }
-        var assigneeNames = await taskRepository.GetExportAssigneeDisplayNamesAsync(filters, cancellationToken);
 
+        var assigneeNames = validated.AssigneeDisplayNames;
         var exportFormat = string.IsNullOrWhiteSpace(format) ? "csv" : format.Trim().ToLowerInvariant();
         switch (exportFormat)
         {
             case "csv":
                 Response.ContentType = "text/csv";
                 Response.Headers.ContentDisposition = $"attachment; filename=tasks-{DateTime.UtcNow:yyyyMMdd}.csv";
+                var csvTaskStream = await mediator.Send(new StreamTaskExportQuery(filters), cancellationToken);
                 await using (var writer = new StreamWriter(Response.Body))
                 await using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
                 {
                     csv.WriteHeader<TaskExportRow>();
                     await csv.NextRecordAsync();
-                    await foreach (var task in taskRepository.GetExportStreamAsync(filters, cancellationToken))
+                    await foreach (var task in csvTaskStream.WithCancellation(cancellationToken))
                     {
                         csv.WriteRecord(MapToExportRow(task, assigneeNames));
                         await csv.NextRecordAsync();
@@ -228,9 +230,10 @@ public sealed class TasksController(IMediator mediator, ITaskExportRepository ta
             case "json":
                 Response.ContentType = "application/json";
                 Response.Headers.ContentDisposition = $"attachment; filename=tasks-{DateTime.UtcNow:yyyyMMdd}.json";
+                var jsonTaskStream = await mediator.Send(new StreamTaskExportQuery(filters), cancellationToken);
                 await JsonSerializer.SerializeAsync(
                     Response.Body,
-                    StreamExportRows(filters, assigneeNames, cancellationToken),
+                    StreamExportRows(jsonTaskStream, assigneeNames, cancellationToken),
                     cancellationToken: cancellationToken);
                 return new EmptyResult();
 
@@ -879,11 +882,11 @@ public sealed class TasksController(IMediator mediator, ITaskExportRepository ta
     }
 
     private async IAsyncEnumerable<TaskExportRow> StreamExportRows(
-        TaskExportFilters filters,
+        IAsyncEnumerable<DomainTask> tasks,
         IReadOnlyDictionary<Guid, string> assigneeNames,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await foreach (var task in taskRepository.GetExportStreamAsync(filters, cancellationToken))
+        await foreach (var task in tasks.WithCancellation(cancellationToken))
         {
             yield return MapToExportRow(task, assigneeNames);
         }

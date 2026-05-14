@@ -18,12 +18,34 @@ api.interceptors.request.use((config) => {
 
 let refreshing: Promise<string> | null = null;
 
+/** 401 on these routes is a business error (e.g. bad password), not an expired access token. */
+function isUnauthorizedWithoutTokenRefresh(config: { url?: string } | undefined): boolean {
+  const url = config?.url ?? '';
+  return (
+    url.includes('/Auth/login') ||
+    url.includes('/Auth/register') ||
+    url.includes('/Auth/refresh') ||
+    url.includes('/Auth/forgot-password') ||
+    url.includes('/Auth/reset-password') ||
+    url.includes('/Auth/verify-email') ||
+    url.includes('/Auth/resend-verification')
+  );
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config as
       | (typeof error.config & { _retry?: boolean })
       | undefined;
+
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      isUnauthorizedWithoutTokenRefresh(originalRequest)
+    ) {
+      return Promise.reject(error);
+    }
 
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;

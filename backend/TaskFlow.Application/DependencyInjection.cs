@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TaskFlow.Application.Behaviors;
 using TaskFlow.Application.Mapping;
+using TaskFlow.Application.Auth.Commands.Validators;
 using TaskFlow.Application.Validation;
 
 namespace TaskFlow.Application;
@@ -13,7 +14,7 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
-        services.AddValidatorsFromAssemblyContaining<RegisterRequestValidator>();
+        services.AddValidatorsFromAssemblyContaining<RegisterCommandValidator>();
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         // Manual AutoMapper wiring to avoid relying on the (archived) DI extension package.

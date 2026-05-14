@@ -9,7 +9,11 @@ interface ProtectedRouteProps {
   requireWorkspace: boolean;
 }
 
-const EMPTY_ORG_ID = '00000000-0000-0000-0000-000000000000';
+export const EMPTY_ORGANIZATION_ID = '00000000-0000-0000-0000-000000000000';
+
+export function userHasWorkspace(user: UserProfileResponse | null | undefined): boolean {
+  return Boolean(user?.organizationId && user.organizationId !== EMPTY_ORGANIZATION_ID);
+}
 
 export function ProtectedRoute({ requireWorkspace }: ProtectedRouteProps) {
   const { isAuthenticated, user, getRefreshToken } = useAuthStore();
@@ -47,7 +51,7 @@ export function ProtectedRoute({ requireWorkspace }: ProtectedRouteProps) {
   }
 
   const currentUser = useAuthStore.getState().user ?? user;
-  const hasWorkspace = Boolean(currentUser?.organizationId && currentUser.organizationId !== EMPTY_ORG_ID);
+  const hasWorkspace = userHasWorkspace(currentUser);
 
   if (requireWorkspace && !hasWorkspace) {
     return <Navigate to="/workspace/create" replace />;

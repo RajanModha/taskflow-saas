@@ -1,11 +1,11 @@
 using System.Security.Claims;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Application.Auth;
 using TaskFlow.Application.Common;
 using TaskFlow.Application.Tasks;
 using TaskFlow.Application.Workspaces;
-using TaskFlow.Domain.Entities;
 using Asp.Versioning;
 
 namespace TaskFlow.API.Controllers;
@@ -15,12 +15,7 @@ namespace TaskFlow.API.Controllers;
 [ApiVersion("1.0")]
 [Authorize]
 [Route("api/v{version:apiVersion}/[controller]")]
-public sealed class WorkspacesController(
-    IWorkspaceService workspaceService,
-    IWorkspaceManagementService workspaceManagement,
-    IWorkspaceTagService workspaceTagService,
-    IWorkspaceTaskTemplateService workspaceTaskTemplateService,
-    IWorkspaceWebhookService workspaceWebhookService) : ControllerBase
+public sealed class WorkspacesController(IMediator mediator) : ControllerBase
 {
     [HttpGet("me")]
     [ProducesResponseType(typeof(MyWorkspaceResponse), StatusCodes.Status200OK)]
@@ -32,7 +27,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var result = await workspaceManagement.GetMyWorkspaceAsync(userId.Value, cancellationToken);
+        var result = await mediator.Send(new GetMyWorkspaceQuery(userId.Value), cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 
@@ -47,7 +42,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var tags = await workspaceTagService.ListTagsAsync(userId.Value, cancellationToken);
+        var tags = await mediator.Send(new ListWorkspaceTagsQuery(userId.Value), cancellationToken);
         return tags is null ? NotFound() : Ok(tags);
     }
 
@@ -64,7 +59,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceTagService.CreateTagAsync(userId.Value, request, cancellationToken);
+        var (status, body) = await mediator.Send(new CreateWorkspaceTagCommand(userId.Value, request), cancellationToken);
         return status == StatusCodes.Status201Created
             ? CreatedAtAction(nameof(ListTags), null, body)
             : StatusCode(status, body);
@@ -84,7 +79,9 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceTagService.UpdateTagAsync(userId.Value, tagId, request, cancellationToken);
+        var (status, body) = await mediator.Send(
+            new UpdateWorkspaceTagCommand(userId.Value, tagId, request),
+            cancellationToken);
         return StatusCode(status, body);
     }
 
@@ -99,7 +96,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var status = await workspaceTagService.DeleteTagAsync(userId.Value, tagId, cancellationToken);
+        var status = await mediator.Send(new DeleteWorkspaceTagCommand(userId.Value, tagId), cancellationToken);
         return status == StatusCodes.Status204NoContent ? NoContent() : NotFound();
     }
 
@@ -119,26 +116,17 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        WorkspaceRole? roleFilter = null;
-        if (!string.IsNullOrWhiteSpace(role))
-        {
-            if (!Enum.TryParse<WorkspaceRole>(role, ignoreCase: true, out var parsed))
-            {
-                return BadRequest(new { message = "Invalid role filter." });
-            }
-
-            roleFilter = parsed;
-        }
-
-        var result = await workspaceManagement.GetMembersPageAsync(
-            userId.Value,
-            page,
-            pageSize,
-            q,
-            roleFilter,
+        var outcome = await mediator.Send(
+            new GetWorkspaceMembersPageQuery(userId.Value, page, pageSize, q, role),
             cancellationToken);
 
-        return result is null ? NotFound() : Ok(result);
+        return outcome switch
+        {
+            WorkspaceMembersPageOk ok => Ok(ok.Value),
+            WorkspaceMembersPageNotFoundOutcome => NotFound(),
+            WorkspaceMembersPageBadRequestOutcome bad => BadRequest(new { message = bad.Message }),
+            _ => Problem(statusCode: StatusCodes.Status500InternalServerError),
+        };
     }
 
     [HttpPost("invite")]
@@ -153,7 +141,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceManagement.InviteMemberAsync(userId.Value, request, cancellationToken);
+        var (status, body) = await mediator.Send(new InviteWorkspaceMemberCommand(userId.Value, request), cancellationToken);
         return StatusCode(status, body);
     }
 
@@ -169,7 +157,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceManagement.ResendInviteAsync(userId.Value, request, cancellationToken);
+        var (status, body) = await mediator.Send(new ResendWorkspaceInviteCommand(userId.Value, request), cancellationToken);
         return StatusCode(status, body);
     }
 
@@ -184,7 +172,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var result = await workspaceManagement.ListInvitesAsync(userId.Value, cancellationToken);
+        var result = await mediator.Send(new ListWorkspaceInvitesQuery(userId.Value), cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 
@@ -198,7 +186,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var status = await workspaceManagement.CancelInviteAsync(userId.Value, inviteId, cancellationToken);
+        var status = await mediator.Send(new CancelWorkspaceInviteCommand(userId.Value, inviteId), cancellationToken);
         return status == StatusCodes.Status204NoContent ? NoContent() : NotFound();
     }
 
@@ -214,7 +202,7 @@ public sealed class WorkspacesController(
             authId = TryGetUserId();
         }
 
-        var (status, body) = await workspaceManagement.AcceptInviteAsync(request, authId, cancellationToken);
+        var (status, body) = await mediator.Send(new AcceptWorkspaceInviteCommand(request, authId), cancellationToken);
         return StatusCode(status, body);
     }
 
@@ -231,10 +219,8 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, error) = await workspaceManagement.UpdateMemberRoleAsync(
-            userId.Value,
-            memberId,
-            request,
+        var (status, error) = await mediator.Send(
+            new UpdateWorkspaceMemberRoleCommand(userId.Value, memberId, request),
             cancellationToken);
 
         return status switch
@@ -257,7 +243,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var status = await workspaceManagement.RemoveMemberAsync(userId.Value, memberId, cancellationToken);
+        var status = await mediator.Send(new RemoveWorkspaceMemberCommand(userId.Value, memberId), cancellationToken);
         return status switch
         {
             StatusCodes.Status204NoContent => NoContent(),
@@ -279,7 +265,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body, error) = await workspaceManagement.RegenerateJoinCodeAsync(userId.Value, cancellationToken);
+        var (status, body, error) = await mediator.Send(new RegenerateWorkspaceJoinCodeCommand(userId.Value), cancellationToken);
         return status switch
         {
             StatusCodes.Status200OK => Ok(body),
@@ -302,9 +288,8 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body, error) = await workspaceManagement.UpdateWorkspaceNameAsync(
-            userId.Value,
-            request,
+        var (status, body, error) = await mediator.Send(
+            new UpdateWorkspaceProfileCommand(userId.Value, request),
             cancellationToken);
 
         return status switch
@@ -327,7 +312,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var outcome = await workspaceService.CreateAsync(userId.Value, request, cancellationToken);
+        var outcome = await mediator.Send(new CreateWorkspaceCommand(userId.Value, request), cancellationToken);
 
         return outcome switch
         {
@@ -348,7 +333,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var result = await workspaceTaskTemplateService.ListTemplatesAsync(userId.Value, cancellationToken);
+        var result = await mediator.Send(new ListWorkspaceTaskTemplatesQuery(userId.Value), cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 
@@ -363,7 +348,9 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var result = await workspaceTaskTemplateService.GetTemplateAsync(userId.Value, templateId, cancellationToken);
+        var result = await mediator.Send(
+            new GetWorkspaceTaskTemplateQuery(userId.Value, templateId),
+            cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 
@@ -382,7 +369,9 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceTaskTemplateService.CreateTemplateAsync(userId.Value, request, cancellationToken);
+        var (status, body) = await mediator.Send(
+            new CreateWorkspaceTaskTemplateCommand(userId.Value, request),
+            cancellationToken);
         return status == StatusCodes.Status201Created
             ? CreatedAtAction(nameof(GetTaskTemplate), new { templateId = ((TaskTemplateDto)body!).Id }, body)
             : StatusCode(status, body);
@@ -404,7 +393,9 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceTaskTemplateService.UpdateTemplateAsync(userId.Value, templateId, request, cancellationToken);
+        var (status, body) = await mediator.Send(
+            new UpdateWorkspaceTaskTemplateCommand(userId.Value, templateId, request),
+            cancellationToken);
         return StatusCode(status, body);
     }
 
@@ -420,7 +411,9 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var status = await workspaceTaskTemplateService.DeleteTemplateAsync(userId.Value, templateId, cancellationToken);
+        var status = await mediator.Send(
+            new DeleteWorkspaceTaskTemplateCommand(userId.Value, templateId),
+            cancellationToken);
         return status == StatusCodes.Status204NoContent ? NoContent() : NotFound();
     }
 
@@ -436,7 +429,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var result = await workspaceWebhookService.ListWebhooksAsync(userId.Value, cancellationToken);
+        var result = await mediator.Send(new ListWorkspaceWebhooksQuery(userId.Value), cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 
@@ -455,7 +448,9 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceWebhookService.CreateWebhookAsync(userId.Value, request, cancellationToken);
+        var (status, body) = await mediator.Send(
+            new CreateWorkspaceWebhookCommand(userId.Value, request),
+            cancellationToken);
         return status == StatusCodes.Status201Created
             ? CreatedAtAction(nameof(ListWebhooks), null, body)
             : StatusCode(status, body);
@@ -477,10 +472,8 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceWebhookService.UpdateWebhookAsync(
-            userId.Value,
-            webhookId,
-            request,
+        var (status, body) = await mediator.Send(
+            new UpdateWorkspaceWebhookCommand(userId.Value, webhookId, request),
             cancellationToken);
         return StatusCode(status, body);
     }
@@ -497,7 +490,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var status = await workspaceWebhookService.DeleteWebhookAsync(userId.Value, webhookId, cancellationToken);
+        var status = await mediator.Send(new DeleteWorkspaceWebhookCommand(userId.Value, webhookId), cancellationToken);
         return status == StatusCodes.Status204NoContent ? NoContent() : NotFound();
     }
 
@@ -517,11 +510,8 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var result = await workspaceWebhookService.GetDeliveriesPageAsync(
-            userId.Value,
-            webhookId,
-            page,
-            pageSize,
+        var result = await mediator.Send(
+            new GetWorkspaceWebhookDeliveriesQuery(userId.Value, webhookId, page, pageSize),
             cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
@@ -539,7 +529,9 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var (status, body) = await workspaceWebhookService.TestWebhookAsync(userId.Value, webhookId, cancellationToken);
+        var (status, body) = await mediator.Send(
+            new TestWorkspaceWebhookCommand(userId.Value, webhookId),
+            cancellationToken);
         return StatusCode(status, body);
     }
 
@@ -553,7 +545,7 @@ public sealed class WorkspacesController(
             return Unauthorized();
         }
 
-        var outcome = await workspaceService.JoinAsync(userId.Value, request, cancellationToken);
+        var outcome = await mediator.Send(new JoinWorkspaceCommand(userId.Value, request), cancellationToken);
 
         return outcome switch
         {

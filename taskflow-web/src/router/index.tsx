@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import AppLayout from '../components/layout/AppLayout';
 import { RouteErrorBoundary } from '../components/RouteErrorBoundary';
 import { ProtectedRoute } from './ProtectedRoute';
+import { RootRedirect } from './RootRedirect';
 import ForgotPasswordPage from '../pages/auth/ForgotPasswordPage';
 import LoginPage from '../pages/auth/LoginPage';
 import RegisterPage from '../pages/auth/RegisterPage';
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
   {
     errorElement: <RouteErrorBoundary />,
     children: [
+      { path: '/', element: <RootRedirect /> },
       { path: '/login', element: <LoginPage /> },
       { path: '/register', element: <RegisterPage /> },
       { path: '/verify-email-pending', element: <VerifyEmailPendingPage /> },
